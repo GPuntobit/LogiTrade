@@ -7,18 +7,23 @@ Comandi:
   /scan [tf]                     - backtest di tutti i simboli configurati
   /signal [SYMBOL] [tf]          - segnale live (tutti i simboli se omesso)
   /watch [on [tf] | off]         - alert automatici ogni N minuti
+  /portfolio                     - portafoglio simulato (paper trading)
+
+Bottoni 🟢BUY / 🔴SELL: operazioni SIMULATE, nessun ordine reale.
 """
 
 import asyncio
 import html
 import logging
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from .config import Settings, load_settings
-from .report import equity_chart, format_report, format_signal, format_signal_line
+from .data import fetch_last_price
+from .paper import Portfolio
+from .report import equity_chart, format_portfolio, format_report, format_signal, format_signal_line
 from .runner import run_symbol
 from .signals import check_signal
 
@@ -26,6 +31,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TIMEFRAMES = {"5m", "15m", "30m", "1h", "4h", "1d"}
+
+
+def _trade_keyboard(symbol: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🟢 BUY", callback_data=f"buy:{symbol}"),
+        InlineKeyboardButton("🔴 SELL", callback_data=f"sell:{symbol}"),
+    ]])
 
 
 def _authorized(settings: Settings):
@@ -48,7 +60,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "   es: /backtest PEPE/USDT 1h 2024-01-01\n"
         "/scan [tf] - backtest di tutti i simboli\n"
         "/signal [SYMBOL] [tf] - segnale live sulla candela chiusa\n"
-        "/watch [on [tf] | off] - alert automatici quando parte un segnale"
+        "/watch [on [tf] | off] - alert automatici quando parte un segnale\n"
+        "/portfolio - portafoglio simulato\n\n"
+        "🟢BUY / 🔴SELL: operazioni simulate (paper trading)"
     )
 
 
@@ -106,6 +120,57 @@ async def cmd_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("\n".join(summary), parse_mode=ParseMode.HTML)
 
 
+async def cmd_portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = ctx.bot_data["settings"]
+    pf = Portfolio.load(initial_cash=settings.initial_cash)
+    status = await update.message.reply_text("⏳ Valutazione portafoglio...")
+    prices: dict[str, float] = {}
+    for symbol in pf.positions:
+        try:
+            prices[symbol] = fetch_last_price(symbol, settings.exchange_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Prezzo non disponibile per %s", symbol)
+    await status.delete()
+    await update.message.reply_text(format_portfolio(pf, prices), parse_mode=ParseMode.HTML)
+
+
+async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Bottoni 🟢BUY / 🔴SELL: operazione SIMULATA sul portafoglio paper."""
+    query = update.callback_query
+    settings: Settings = ctx.bot_data["settings"]
+    action, _, symbol = query.data.partition(":")
+    try:
+        price = fetch_last_price(symbol, settings.exchange_id)
+        pf = Portfolio.load(initial_cash=settings.initial_cash)
+        if action == "buy":
+            usdt = pf.cash * settings.position_pct / 100
+            pos = pf.buy(symbol, price, usdt, settings.commission_pct, settings.slippage_pct)
+            pf.save()
+            msg = (
+                f"🟢 <b>Acquisto SIMULATO</b> {symbol}\n"
+                f"Quantità: {pos.qty:.6g} @ {pos.entry_price:.8g}\n"
+                f"Investito: {usdt:,.2f} USDT | Cash rimanente: {pf.cash:,.2f} USDT"
+            )
+        elif action == "sell":
+            trade = pf.sell(symbol, price, settings.commission_pct, settings.slippage_pct)
+            pf.save()
+            msg = (
+                f"🔴 <b>Vendita SIMULATA</b> {symbol}\n"
+                f"Quantità: {trade['qty']:.6g} @ {trade['price']:.8g}\n"
+                f"Incassato: {trade['usdt']:,.2f} USDT | PnL: {trade['pnl']:+,.2f} USDT\n"
+                f"Cash: {pf.cash:,.2f} USDT"
+            )
+        else:
+            msg = f"Azione sconosciuta: {action}"
+        await query.answer()
+        await query.edit_message_text(msg, parse_mode=ParseMode.HTML)
+    except ValueError as e:
+        await query.answer(str(e), show_alert=True)
+    except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
+        logger.exception("Operazione simulata fallita")
+        await query.answer(f"Errore: {e}", show_alert=True)
+
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await cmd_help(update, ctx)
 
@@ -124,7 +189,8 @@ async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             snap = check_signal(symbol, settings, tf)
             await status.delete()
-            await update.message.reply_text(format_signal(snap, settings), parse_mode=ParseMode.HTML)
+            await update.message.reply_text(format_signal(snap, settings), parse_mode=ParseMode.HTML,
+                                            reply_markup=_trade_keyboard(symbol))
         except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
             logger.exception("Controllo segnale fallito")
             await status.edit_text(f"❌ Errore: {html.escape(str(e))}")
@@ -207,7 +273,8 @@ async def watch_loop(app: Application) -> None:
             text = format_signal(snap, settings)
             for cid in sorted(watch["chats"]):
                 try:
-                    await app.bot.send_message(cid, text, parse_mode=ParseMode.HTML)
+                    await app.bot.send_message(cid, text, parse_mode=ParseMode.HTML,
+                                               reply_markup=_trade_keyboard(symbol))
                 except Exception:  # noqa: BLE001
                     logger.exception("Watch: invio fallito verso %s", cid)
 
@@ -238,9 +305,10 @@ def main() -> None:
         for name, handler in [
             ("start", cmd_start), ("help", cmd_help), ("symbols", cmd_symbols),
             ("backtest", cmd_backtest), ("scan", cmd_scan),
-            ("signal", cmd_signal), ("watch", cmd_watch),
+            ("signal", cmd_signal), ("watch", cmd_watch), ("portfolio", cmd_portfolio),
         ]:
             app.add_handler(CommandHandler(name, await wrapped(handler)))
+        app.add_handler(CallbackQueryHandler(await wrapped(cb_trade)))
         await app.initialize()
         await app.start()
         await app.updater.start_polling()

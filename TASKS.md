@@ -131,6 +131,20 @@ e spuntata prima di passare alla successiva.
             → `strategy.family: breakout`, `backtest.timeframe: 1d`,
             `trend_sma_period: 0`. **ATTIVATA come default** (config.yaml).
 
+- [x] **8. Bottoni BUY/SELL simulati (paper trading)**
+      - [x] 8.1 Modulo `paper.py`: portafoglio virtuale persistito (JSON), buy/sell
+            con commissioni+slippage reali, media ponderata, PnL realized
+      - [x] 8.2 Bot: bottoni inline 🟢BUY/🔴SELL su /signal (singolo simbolo) e alert
+            /watch; handler callback con auth guard, errori come alert Telegram
+      - [x] 8.3 Comando `/portfolio` con PnL a mercato (prezzi via ticker)
+      - [x] 8.4 Test (18: contabilità costi, clamp cash, media ponderata, persistenza,
+            PnL realized, formattazione). Suite: 164 test
+      - [x] 8.5 Docs + .gitignore (`paper_portfolio.json`)
+
+      **NOTA: nessun ordine reale.** Le operazioni sono simulate in locale
+      (`paper_portfolio.json`). Il trading reale richiederebbe API key exchange,
+      gestione rischi e un design di sicurezza dedicato.
+
 ## Note di esecuzione
 
 <!-- Aggiornare man mano che ogni task viene completata -->

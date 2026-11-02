@@ -21,6 +21,18 @@ def _exchange(exchange_id: str) -> ccxt.Exchange:
     return ex
 
 
+def fetch_last_price(symbol: str, exchange_id: str = "binance") -> float:
+    """Ultimo prezzo noto per il simbolo (ticker)."""
+    ex = _exchange(exchange_id)
+    if symbol not in ex.markets:
+        raise ValueError(f"{symbol} non disponibile su {exchange_id}")
+    ticker = ex.fetch_ticker(symbol)
+    price = ticker.get("last") or ticker.get("close")
+    if not price:
+        raise ValueError(f"Prezzo non disponibile per {symbol}")
+    return float(price)
+
+
 def fetch_ohlcv(symbol: str, timeframe: str = "1h", since: str = "2024-01-01",
                 exchange_id: str = "binance", use_cache: bool = True) -> pd.DataFrame:
     """Scarica le candele OHLCV e le restituisce come DataFrame (indice datetime UTC)."""

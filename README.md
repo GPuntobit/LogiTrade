@@ -101,6 +101,14 @@ Poi su Telegram:
 - `/signal PEPE/USDT 4h` — dettaglio segnale su un simbolo, con SL/TP suggeriti
 - `/watch on 1h` — alert automatici quando parte un segnale di ingresso/uscita
 - `/watch off` — disattiva gli alert
+- `/portfolio` — portafoglio simulato (cash, posizioni aperte, PnL)
+
+Sui messaggi di `/signal` (singolo simbolo) e sugli alert di `/watch` compaiono i
+bottoni **🟢 BUY** e **🔴 SELL**: eseguono operazioni **simulate** (paper trading)
+su un portafoglio virtuale salvato in `paper_portfolio.json`, applicando le stesse
+commissioni e slippage del backtest. **Nessun ordine reale viene inviato
+all'exchange** — per il trading reale servirebbe un progetto dedicato con API key
+e controlli di rischio.
 
 I segnali live usano le candele più recenti dell'exchange (niente cache) e valutano
 la strategia sull'ultima candela **chiusa**, così il segnale non cambia durante la

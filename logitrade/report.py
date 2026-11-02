@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from .backtest import BacktestResult
 from .config import Settings
+from .paper import Portfolio
 from .signals import SignalSnapshot
 
 
@@ -72,6 +73,40 @@ def format_signal_line(snap: SignalSnapshot) -> str:
     """Riga compatta per lo scan di tutti i simboli (/signal senza argomenti)."""
     icon = {"ENTRY": "🚀", "EXIT": "🔔", "NEUTRAL": "⚪"}[snap.status]
     return f"{icon} {snap.symbol}: {snap.status} | RSI {snap.rsi:.1f} | prezzo {snap.price:.8g}"
+
+
+def format_portfolio(pf: Portfolio, prices: dict[str, float]) -> str:
+    """Report HTML del portafoglio simulato (paper trading)."""
+    lines = [
+        "💼 <b>Portafoglio simulato</b> (paper trading, nessun ordine reale)",
+        "",
+        f"💵 Cash: {pf.cash:,.2f} USDT",
+    ]
+    total = pf.cash
+    if pf.positions:
+        lines.append("")
+        lines.append("Posizioni aperte:")
+        for sym, pos in pf.positions.items():
+            price = prices.get(sym)
+            if price:
+                value = pos.qty * price
+                pnl_pct = (price / pos.entry_price - 1) * 100
+                total += value
+                lines.append(
+                    f"• {sym}: {pos.qty:.6g} @ {pos.entry_price:.8g} | "
+                    f"ora {price:.8g} | PnL <b>{pnl_pct:+.2f}%</b>"
+                )
+            else:
+                lines.append(f"• {sym}: {pos.qty:.6g} @ {pos.entry_price:.8g} | prezzo non disponibile")
+    else:
+        lines.append("Nessuna posizione aperta.")
+    lines += ["", f"💰 Totale: {total:,.2f} USDT"]
+
+    closed = [h for h in pf.history if h["side"] == "sell"]
+    if closed:
+        realized = sum(h.get("pnl", 0.0) for h in closed)
+        lines.append(f"📊 Trade chiusi: {len(closed)} | PnL realized: {realized:+,.2f} USDT")
+    return "\n".join(lines)
 
 
 def equity_chart(res: BacktestResult, symbol: str) -> bytes:
