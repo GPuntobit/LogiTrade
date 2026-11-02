@@ -1,0 +1,49 @@
+# LogiTrade - configurazione di default
+
+exchange:
+  id: binance          # exchange ccxt per i dati storici
+  quote: USDT          # valuta quotazione
+
+# Meme coin seguiti di default
+symbols:
+  - PEPE/USDT
+  - DOGE/USDT
+  - SHIB/USDT
+  - WIF/USDT
+  - BONK/USDT
+  - FLOKI/USDT
+
+backtest:
+  timeframe: 1d        # 5m, 15m, 1h, 4h, 1d
+  since: "2024-01-01"  # inizio dati storici
+  initial_cash: 10000  # USDT iniziali
+  commission_pct: 0.1  # commissione per lato (0.1% = 10 bps, tipico spot)
+  slippage_pct: 0.05   # slippage stimato per lato
+
+strategy:
+  family: breakout     # rsi_macd | breakout (Donchian, trend-following)
+  # RSI
+  rsi_period: 14
+  rsi_oversold: 30     # ingresso long sotto questa soglia
+  rsi_overbought: 70   # uscita sopra questa soglia
+  # MACD
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  trend_sma_period: 0    # filtro trend: SMA di periodo N (0 = disattivato)
+                          # NOTA: con family: breakout tenerlo a 0 (il filtro danneggia)
+  trend_slope_bars: 50   # la SMA deve essere crescente sulle ultime K barre
+  entry_mode: classic    # classic = RSI<30 e incrocio MACD sulla stessa barra
+  entry_lookback: 5      # dip_turn: RSI<30 entro le ultime N barre, incrocio ora
+  # Breakout (solo con family: breakout)
+  breakout_entry_lookback: 20  # rottura del massimo high delle N barre precedenti
+  breakout_exit_lookback: 10   # rottura del minimo low delle M barre precedenti
+
+risk:
+  position_pct: 25     # % del capitale per posizione (meme coin = alto rischio, tienilo basso)
+  stop_loss_pct: 5     # stop loss dal prezzo di ingresso
+  take_profit_pct: 15  # take profit dal prezzo di ingresso
+  trailing_stop_pct: 0 # trailing stop sul massimo dall'ingresso (0 = disattivato)
+
+signal:
+  check_interval_minutes: 60  # intervallo dei controlli automatici di /watch

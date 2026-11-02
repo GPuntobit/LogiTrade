@@ -1,0 +1,33 @@
+# --- Segreti ---
+.env
+
+# --- Ambiente virtuale ---
+.venv/
+venv/
+env/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# --- Test ---
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Output generati ---
+equity.png
+data_cache/
+
+# --- IDE / editor ---
+.idea/
+.vscode/
+*.swp
+
+# --- OS ---
+.DS_Store
+Thumbs.db
