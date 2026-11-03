@@ -1,7 +1,7 @@
 # LogiTrade - configurazione di default
 
 exchange:
-  id: binance          # exchange ccxt per i dati storici
+  id: okx             # exchange ccxt per i dati storici
   quote: USDT          # valuta quotazione
 
 # Meme coin seguiti di default

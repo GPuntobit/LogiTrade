@@ -21,7 +21,7 @@ def _exchange(exchange_id: str) -> ccxt.Exchange:
     return ex
 
 
-def fetch_last_price(symbol: str, exchange_id: str = "binance") -> float:
+def fetch_last_price(symbol: str, exchange_id: str = "okx") -> float:
     """Ultimo prezzo noto per il simbolo (ticker)."""
     ex = _exchange(exchange_id)
     if symbol not in ex.markets:
@@ -34,7 +34,7 @@ def fetch_last_price(symbol: str, exchange_id: str = "binance") -> float:
 
 
 def fetch_ohlcv(symbol: str, timeframe: str = "1h", since: str = "2024-01-01",
-                exchange_id: str = "binance", use_cache: bool = True) -> pd.DataFrame:
+                exchange_id: str = "okx", use_cache: bool = True) -> pd.DataFrame:
     """Scarica le candele OHLCV e le restituisce come DataFrame (indice datetime UTC)."""
     if timeframe not in _TIMEFRAME_MS:
         raise ValueError(f"Timeframe non supportato: {timeframe}")
@@ -56,9 +56,10 @@ def fetch_ohlcv(symbol: str, timeframe: str = "1h", since: str = "2024-01-01",
         if not batch:
             break
         rows.extend(batch)
-        since_ms = batch[-1][0] + tf_ms
-        if len(batch) < 1000 or since_ms > ex.milliseconds():
+        next_since = batch[-1][0] + tf_ms
+        if next_since <= since_ms:  # nessun avanzamento: evita loop infiniti
             break
+        since_ms = next_since
 
     df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
     df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)

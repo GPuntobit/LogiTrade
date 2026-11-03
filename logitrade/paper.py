@@ -69,13 +69,15 @@ class Portfolio:
         qty = amount * (1 - fee) / fill_price
         self.cash -= amount
 
+        # prezzo di carico INCLUSI costi: totale investito / quantità
         pos = self.positions.get(symbol)
         if pos:
             total_qty = pos.qty + qty
-            pos.entry_price = (pos.entry_price * pos.qty + fill_price * qty) / total_qty
+            total_cost = pos.qty * pos.entry_price + amount
+            pos.entry_price = total_cost / total_qty
             pos.qty = total_qty
         else:
-            pos = Position(symbol=symbol, qty=qty, entry_price=fill_price, entry_time=_now())
+            pos = Position(symbol=symbol, qty=qty, entry_price=amount / qty, entry_time=_now())
             self.positions[symbol] = pos
 
         self.history.append({"time": _now(), "side": "buy", "symbol": symbol,
@@ -104,6 +106,32 @@ class Portfolio:
                              "price": fill_price, "qty": pos.qty, "usdt": proceeds, "pnl": pnl})
         return {"symbol": symbol, "price": fill_price, "qty": pos.qty,
                 "usdt": proceeds, "pnl": pnl}
+
+    def auto_trade(self, symbol: str, status: str, price: float, position_pct: float = 25.0,
+                   commission_pct: float = 0.1, slippage_pct: float = 0.05) -> dict | None:
+        """Operazione simulata coerente col segnale di andamento.
+
+        ENTRY -> compra (position_pct del cash) se non c'e' gia' una posizione;
+        EXIT  -> vende l'intera posizione se aperta;
+        NEUTRAL o caso non applicabile -> None.
+        Al massima una posizione per simbolo (no pyramiding).
+        """
+        if status == "ENTRY":
+            if symbol in self.positions:
+                return None
+            usdt = self.cash * position_pct / 100
+            if usdt <= 0:
+                raise ValueError("Cash insufficiente")
+            pos = self.buy(symbol, price, usdt, commission_pct, slippage_pct)
+            return {"action": "buy", "symbol": symbol, "price": pos.entry_price,
+                    "qty": pos.qty, "usdt": usdt}
+        if status == "EXIT":
+            if symbol not in self.positions:
+                return None
+            trade = self.sell(symbol, price, commission_pct, slippage_pct)
+            return {"action": "sell", "symbol": symbol, "price": trade["price"],
+                    "qty": trade["qty"], "usdt": trade["usdt"], "pnl": trade["pnl"]}
+        return None
 
     def value(self, prices: dict[str, float]) -> float:
         """Valore totale a mercato: cash + posizioni valorizzate ai prezzi dati."""

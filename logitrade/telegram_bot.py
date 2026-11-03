@@ -8,6 +8,7 @@ Comandi:
   /signal [SYMBOL] [tf]          - segnale live (tutti i simboli se omesso)
   /watch [on [tf] | off]         - alert automatici ogni N minuti
   /portfolio                     - portafoglio simulato (paper trading)
+  /auto [on [tf] | off]          - buy/sell automatici simulati sui segnali
 
 Bottoni 🟢BUY / 🔴SELL: operazioni SIMULATE, nessun ordine reale.
 """
@@ -23,7 +24,8 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from .config import Settings, load_settings
 from .data import fetch_last_price
 from .paper import Portfolio
-from .report import equity_chart, format_portfolio, format_report, format_signal, format_signal_line
+from .report import (equity_chart, format_auto_trade, format_portfolio, format_report,
+                     format_signal, format_signal_line)
 from .runner import run_symbol
 from .signals import check_signal
 
@@ -61,7 +63,8 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/scan [tf] - backtest di tutti i simboli\n"
         "/signal [SYMBOL] [tf] - segnale live sulla candela chiusa\n"
         "/watch [on [tf] | off] - alert automatici quando parte un segnale\n"
-        "/portfolio - portafoglio simulato\n\n"
+        "/portfolio - portafoglio simulato\n"
+        "/auto [on [tf] | off] - buy/sell automatici simulati sui segnali\n\n"
         "🟢BUY / 🔴SELL: operazioni simulate (paper trading)"
     )
 
@@ -171,6 +174,46 @@ async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await query.answer(f"Errore: {e}", show_alert=True)
 
 
+async def cmd_auto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Buy/sell AUTOMATICI simulati: operazioni in base all'andamento (segnali)."""
+    settings: Settings = ctx.bot_data["settings"]
+    watch = ctx.bot_data["watch"]
+    args = ctx.args or []
+    chat_id = update.effective_chat.id
+
+    if not args:
+        state = "🟢 attivo" if chat_id in watch["auto_chats"] else "⚪ spento"
+        await update.message.reply_text(
+            f"🤖 Auto-trade: {state} (paper trading) | tf {watch['timeframe']} | "
+            f"intervallo {watch['interval_minutes']} min\n\n"
+            "Comandi: /auto on [tf] · /auto off\n"
+            "Con l'auto attivo: segnale ENTRY → acquisto simulato (position_pct del cash),\n"
+            "segnale EXIT → vendita simulata della posizione aperta.\n"
+            "Esecuzione al prezzo di chiusura candela (come il backtest)."
+        )
+        return
+
+    action = args[0].lower()
+    if action == "on":
+        tf = args[1] if len(args) > 1 else settings.timeframe
+        if tf not in TIMEFRAMES:
+            await update.message.reply_text(f"Timeframe non valido: {tf}")
+            return
+        watch["timeframe"] = tf
+        watch["chats"].add(chat_id)        # l'auto implica il watch (per i messaggi)
+        watch["auto_chats"].add(chat_id)
+        watch["enabled"] = True
+        await update.message.reply_text(
+            f"🤖 Auto-trade attivo ogni {watch['interval_minutes']} min su {tf} (simulato).\n"
+            "Riceverai conferma di ogni operazione eseguita."
+        )
+    elif action == "off":
+        watch["auto_chats"].discard(chat_id)
+        await update.message.reply_text("🤖 Auto-trade disattivato per questa chat.")
+    else:
+        await update.message.reply_text("Uso: /auto [on [tf] | off]")
+
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await cmd_help(update, ctx)
 
@@ -271,6 +314,19 @@ async def watch_loop(app: Application) -> None:
             if len(watch["seen"]) > 1000:
                 watch["seen"].clear()
             text = format_signal(snap, settings)
+            if watch["auto_chats"]:
+                # paper trade automatico in base all'andamento (segnale)
+                try:
+                    pf = Portfolio.load(initial_cash=settings.initial_cash)
+                    result = pf.auto_trade(symbol, snap.status, snap.price,
+                                           settings.position_pct,
+                                           settings.commission_pct, settings.slippage_pct)
+                    if result:
+                        pf.save()
+                        text += "\n\n" + format_auto_trade(result)
+                except Exception as e:  # noqa: BLE001
+                    logger.exception("Auto: operazione fallita per %s", symbol)
+                    text += f"\n\n⚠️ Operazione automatica non eseguita: {html.escape(str(e))}"
             for cid in sorted(watch["chats"]):
                 try:
                     await app.bot.send_message(cid, text, parse_mode=ParseMode.HTML,
@@ -298,6 +354,7 @@ def main() -> None:
         app.bot_data["watch"] = {
             "enabled": False,
             "chats": set(),
+            "auto_chats": set(),
             "seen": set(),
             "interval_minutes": settings.signal_check_minutes,
             "timeframe": settings.timeframe,
@@ -306,6 +363,7 @@ def main() -> None:
             ("start", cmd_start), ("help", cmd_help), ("symbols", cmd_symbols),
             ("backtest", cmd_backtest), ("scan", cmd_scan),
             ("signal", cmd_signal), ("watch", cmd_watch), ("portfolio", cmd_portfolio),
+            ("auto", cmd_auto),
         ]:
             app.add_handler(CommandHandler(name, await wrapped(handler)))
         app.add_handler(CallbackQueryHandler(await wrapped(cb_trade)))

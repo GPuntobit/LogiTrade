@@ -75,6 +75,21 @@ def format_signal_line(snap: SignalSnapshot) -> str:
     return f"{icon} {snap.symbol}: {snap.status} | RSI {snap.rsi:.1f} | prezzo {snap.price:.8g}"
 
 
+def format_auto_trade(result: dict) -> str:
+    """Riepilogo HTML di un'operazione automatica simulata."""
+    if result["action"] == "buy":
+        return (
+            f"🟢 <b>ACQUISTO AUTOMATICO (SIMULATO)</b> {result['symbol']}\n"
+            f"Quantità: {result['qty']:.6g} @ {result['price']:.8g}\n"
+            f"Investito: {result['usdt']:,.2f} USDT"
+        )
+    return (
+        f"🔴 <b>VENDEITA AUTOMATICA (SIMULATA)</b> {result['symbol']}\n"
+        f"Quantità: {result['qty']:.6g} @ {result['price']:.8g}\n"
+        f"PnL: {result['pnl']:+,.2f} USDT"
+    )
+
+
 def format_portfolio(pf: Portfolio, prices: dict[str, float]) -> str:
     """Report HTML del portafoglio simulato (paper trading)."""
     lines = [

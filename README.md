@@ -102,6 +102,9 @@ Poi su Telegram:
 - `/watch on 1h` — alert automatici quando parte un segnale di ingresso/uscita
 - `/watch off` — disattiva gli alert
 - `/portfolio` — portafoglio simulato (cash, posizioni aperte, PnL)
+- `/auto on 1d` — **buy/sell automatici simulati**: ENTRY → acquisto (25% del cash),
+  EXIT → vendita della posizione aperta, eseguiti al prezzo di chiusura candela
+  (come il backtest). `/auto off` per disattivare
 
 Sui messaggi di `/signal` (singolo simbolo) e sugli alert di `/watch` compaiono i
 bottoni **🟢 BUY** e **🔴 SELL**: eseguono operazioni **simulate** (paper trading)
@@ -109,6 +112,10 @@ su un portafoglio virtuale salvato in `paper_portfolio.json`, applicando le stes
 commissioni e slippage del backtest. **Nessun ordine reale viene inviato
 all'exchange** — per il trading reale servirebbe un progetto dedicato con API key
 e controlli di rischio.
+
+Con `/auto` le stesse operazioni vengono eseguite **automaticamente** in base
+all'andamento della meme coin (segnali della strategia configurata), con al
+massima una posizione per simbolo (no pyramiding) e un'operazione per candela.
 
 I segnali live usano le candele più recenti dell'exchange (niente cache) e valutano
 la strategia sull'ultima candela **chiusa**, così il segnale non cambia durante la

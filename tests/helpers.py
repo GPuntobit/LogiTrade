@@ -66,7 +66,7 @@ def random_walk_closes(n: int, seed: int, drift: float = 0.0, vol: float = 0.02,
 def make_settings(**overrides) -> Settings:
     """Settings di test con default allineati a config.yaml."""
     defaults = dict(
-        exchange_id="binance",
+        exchange_id="okx",
         symbols=["PEPE/USDT", "DOGE/USDT"],
         timeframe="1h",
         since="2024-01-01",

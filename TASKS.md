@@ -145,6 +145,24 @@ e spuntata prima di passare alla successiva.
       (`paper_portfolio.json`). Il trading reale richiederebbe API key exchange,
       gestione rischi e un design di sicurezza dedicato.
 
+- [x] **9. Buy/sell automatici in base all'andamento (paper trading)**
+      - [x] 9.1 `Portfolio.auto_trade`: ENTRY→buy (position_pct del cash) solo se
+            piatta, EXIT→sell solo se posizione aperta, NEUTRAL→nulla. Costo base
+            incluso di commissioni (PnL = proceeds - investito, contabilità esatta).
+            Corretto anche il bug semantico su entry_price (ora include i costi)
+      - [x] 9.2 Bot: comando `/auto [on [tf] | off]` (auto implica watch), esecuzione
+            nel loop di controllo con dedupe per candela (max 1 operazione/candela),
+            riepilogo nei messaggi, errori riportati come nota
+      - [x] 9.3 Test (12 nuovi: pyramiding, ciclo completo, cash esaurito, format).
+            Suite: 173 test
+      - [x] 9.4 Docs
+
 ## Note di esecuzione
+
+- **2026-11: sorgente dati spostata da Binance a OKX** (`exchange.id: okx`, anche in
+  `.env`). Corretto un bug di paginazione scoperto nel passaggio: OKX ritorna batch
+  da max 300 candele e il loop si fermava al primo batch parziale. I risultati delle
+  task 1-9 sono stati calcolati su dati Binance; la scan di conferma su OKX dà
+  numeri coerenti (somma +231% vs +227%).
 
 <!-- Aggiornare man mano che ogni task viene completata -->

@@ -19,7 +19,7 @@ from .strategy import StrategyParams, generate_signals
 WARMUP_CANDLES = 300
 
 
-def fetch_recent(symbol: str, timeframe: str, exchange_id: str = "binance",
+def fetch_recent(symbol: str, timeframe: str, exchange_id: str = "okx",
                  limit: int = WARMUP_CANDLES) -> pd.DataFrame:
     """Scarica le ultime `limit` candele (inclusa quella in formazione), senza cache."""
     if timeframe not in _TIMEFRAME_MS:

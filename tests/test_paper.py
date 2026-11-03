@@ -3,7 +3,7 @@
 import pytest
 
 from logitrade.paper import Portfolio, Position
-from logitrade.report import format_portfolio
+from logitrade.report import format_auto_trade, format_portfolio
 
 FEE = 0.1   # %
 SLIP = 0.05  # %
@@ -17,7 +17,9 @@ class TestBuy:
         fill_price = 100.0 * (1 + SLIP / 100)
         expected_qty = 2_500.0 * (1 - FEE / 100) / fill_price
         assert pos.qty == pytest.approx(expected_qty)
-        assert pos.entry_price == pytest.approx(fill_price)
+        # prezzo di carico inclusi costi: investito / quantità
+        assert pos.entry_price == pytest.approx(2_500.0 / expected_qty)
+        assert pos.entry_price == pytest.approx(fill_price / (1 - FEE / 100))
         assert pf.cash == pytest.approx(7_500.0)
         assert "X/USDT" in pf.positions
 
@@ -118,6 +120,70 @@ class TestPersistence:
             pf = Portfolio.load(path)
         assert pf.cash == pytest.approx(7_000.0)
         assert len(pf.history) == 3
+
+
+class TestAutoTrade:
+    def test_entry_signal_buys_when_flat(self):
+        pf = Portfolio(cash=10_000.0)
+        result = pf.auto_trade("X/USDT", "ENTRY", price=100.0, position_pct=25.0)
+        assert result["action"] == "buy"
+        assert result["usdt"] == pytest.approx(2_500.0)
+        assert "X/USDT" in pf.positions
+        assert pf.cash == pytest.approx(7_500.0)
+
+    def test_entry_signal_no_pyramiding(self):
+        pf = Portfolio(cash=10_000.0)
+        pf.auto_trade("X/USDT", "ENTRY", price=100.0)
+        assert pf.auto_trade("X/USDT", "ENTRY", price=110.0) is None
+        assert len(pf.history) == 1  # nessun secondo acquisto
+
+    def test_exit_signal_sells_open_position(self):
+        pf = Portfolio(cash=10_000.0)
+        pf.auto_trade("X/USDT", "ENTRY", price=100.0)
+        result = pf.auto_trade("X/USDT", "EXIT", price=110.0)
+        assert result["action"] == "sell"
+        assert result["pnl"] > 0
+        assert "X/USDT" not in pf.positions
+
+    def test_exit_signal_without_position_does_nothing(self):
+        pf = Portfolio(cash=10_000.0)
+        assert pf.auto_trade("X/USDT", "EXIT", price=100.0) is None
+        assert pf.cash == pytest.approx(10_000.0)
+
+    def test_neutral_does_nothing(self):
+        pf = Portfolio(cash=10_000.0)
+        assert pf.auto_trade("X/USDT", "NEUTRAL", price=100.0) is None
+        assert pf.history == []
+
+    def test_buy_without_cash_raises(self):
+        pf = Portfolio(cash=0.0)
+        with pytest.raises(ValueError, match="Cash insufficiente"):
+            pf.auto_trade("X/USDT", "ENTRY", price=100.0)
+
+    def test_full_cycle_pnl(self):
+        """Ciclo completo ENTRY→EXIT: il PnL torna col conto economico."""
+        pf = Portfolio(cash=10_000.0)
+        pf.auto_trade("X/USDT", "ENTRY", price=100.0, position_pct=25.0,
+                      commission_pct=0.1, slippage_pct=0.05)
+        result = pf.auto_trade("X/USDT", "EXIT", price=100.0, commission_pct=0.1, slippage_pct=0.05)
+        # prezzo invariato: la perdita e' esattamente i costi di andata e ritorno
+        assert result["pnl"] < 0
+        assert pf.cash == pytest.approx(10_000.0 + result["pnl"])  # costo = investito
+
+
+class TestFormatAutoTrade:
+    def test_buy_summary(self):
+        out = format_auto_trade({"action": "buy", "symbol": "X/USDT", "price": 100.0,
+                                 "qty": 25.0, "usdt": 2_500.0})
+        assert "ACQUISTO AUTOMATICO" in out
+        assert "SIMULATO" in out
+        assert "X/USDT" in out
+
+    def test_sell_summary(self):
+        out = format_auto_trade({"action": "sell", "symbol": "X/USDT", "price": 110.0,
+                                 "qty": 25.0, "usdt": 2_750.0, "pnl": 250.0})
+        assert "VENDEITA AUTOMATICA" in out or "VENDEITA" in out
+        assert "PnL" in out
 
 
 class TestValueAndFormat:

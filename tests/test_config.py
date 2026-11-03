@@ -35,7 +35,7 @@ risk:
 def test_loads_project_config():
     s = load_settings()
     assert "PEPE/USDT" in s.symbols
-    assert s.exchange_id == "binance"
+    assert s.exchange_id == "okx"
     assert s.timeframe == "1d"
     assert s.rsi_period == 14
     assert s.stop_loss_pct == 5.0
