@@ -128,6 +128,15 @@ Con `/auto` le stesse operazioni vengono eseguite **automaticamente** in base
 all'andamento della meme coin (segnali della strategia configurata), con al
 massima una posizione per simbolo (no pyramiding) e un'operazione per candela.
 
+⚠️ **Dopo ogni modifica al codice il bot va riavviato**: un processo vecchio
+ignora silenziosamente i comandi nuovi (es. `/buy`). `/help` riporta l'orario di
+avvio del processo; i log finiscono in `bot.log` (gitignored).
+
+**Un solo'istanza alla volta**: il file `bot.pid` (gitignored) blocca un secondo
+avvio con un messaggio chiaro (PID incluso), perché Telegram rifiuta due poller
+sullo stesso token (HTTP 409 Conflict). Per fermare l'istanza attiva:
+`kill $(cat bot.pid)`. Ctrl-C termina il bot pulitamente, senza traceback.
+
 I segnali live usano le candele più recenti dell'exchange (niente cache) e valutano
 la strategia sull'ultima candela **chiusa**, così il segnale non cambia durante la
 formazione. Nessun ordine viene eseguito: solo notifiche.

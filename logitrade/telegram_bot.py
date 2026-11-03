@@ -18,14 +18,18 @@ Il BUY apre la scelta dell'importo (preset o /buy per un importo libero).
 """
 
 import asyncio
+import atexit
 import html
 import logging
+import os
+from datetime import datetime
+from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
-from .config import Settings, load_settings
+from .config import PROJECT_ROOT, Settings, load_settings
 from .data import fetch_last_price
 from .paper import Portfolio
 from .report import (equity_chart, format_auto_trade, format_portfolio, format_report,
@@ -37,6 +41,78 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TIMEFRAMES = {"5m", "15m", "30m", "1h", "4h", "1d"}
+
+# Momento di avvio del processo: con /help si capisce se il bot sta girando con
+# codice vecchio (non ricaricato dopo una modifica) -> va riavviato.
+STARTED_AT = datetime.now().astimezone()
+
+# --- Singola istanza -----------------------------------------------------
+# Telegram rifiuta due poller sullo stesso token (HTTP 409 Conflict): il file
+# bot.pid tiene traccia dell'istanza attiva e un secondo avvio fallisce subito
+# con un messaggio chiaro invece di un'esplosione di errori in log.
+LOCK_FILE = PROJECT_ROOT / "bot.pid"
+
+
+class _ConflictHintFilter(logging.Filter):
+    """Aggiunge una spiegazione in italiano al Conflict (istanza doppia) di PTB."""
+
+    HINT = ("\n💡 Solo un'istanza può fare polling: ferma l'altra "
+            "(il file bot.pid contiene il PID di quella attiva).")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        needs_hint = ((exc is not None and "only one bot instance" in str(exc))
+                      or "only one bot instance" in record.getMessage())
+        if needs_hint and "bot.pid" not in record.getMessage():
+            record.msg = record.getMessage() + self.HINT
+            record.args = ()
+        return True
+
+
+logging.getLogger("telegram.ext.Updater").addFilter(_ConflictHintFilter())
+
+
+def _pid_running(pid: int) -> bool:
+    """True se `pid` e' un nostro bot ancora vivo (su Linux controlla /proc)."""
+    if pid <= 0 or pid > 4_194_304:  # PID_MAX: numeri fuori range = lock corrotto
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()  # evita falsi pid riutilizzati
+    except OSError:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+    return b"logitrade.telegram_bot" in cmdline
+
+
+def acquire_instance_lock(path: Path = LOCK_FILE) -> None:
+    """Un solo'istanza del bot: esce con un errore chiaro se un'altra gira gia'."""
+    if path.exists():
+        try:
+            pid = int(path.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            pid = -1
+        if pid != os.getpid() and _pid_running(pid):
+            raise SystemExit(
+                f"⚠️ Bot già in esecuzione (PID {pid}): chiudi quell'istanza prima di avviarne un'altra.\n"
+                "   Telegram accetta un solo poller (altrimenti: HTTP 409 Conflict).\n"
+                f"   per fermarla: kill {pid}"
+            )
+    path.write_text(str(os.getpid()), encoding="utf-8")
+    atexit.register(release_instance_lock, path)
+
+
+def release_instance_lock(path: Path = LOCK_FILE) -> None:
+    """Rimuove il lock solo se e' nostro (non tocca il lock di un'altra istanza)."""
+    try:
+        if path.exists() and path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            path.unlink()
+    except OSError:
+        logger.warning("Lock %s non rimovibile", path, exc_info=True)
 
 
 def _trade_keyboard(symbols: list[str], holdings: set[str] | None = None) -> InlineKeyboardMarkup:
@@ -132,6 +208,37 @@ def _fmt_sell(symbol: str, trade: dict, cash: float, pf: Portfolio) -> str:
     return "\n".join(lines)
 
 
+async def _answer(query, text: str | None = None, alert: bool = False) -> None:
+    """Acknowledge del callback senza mai far fallire il flusso.
+
+    Una doppia risposta (o una query scaduta) non deve bloccare l'operazione:
+    l'errore viene loggato e si continua.
+    """
+    try:
+        await query.answer(text, show_alert=alert)
+    except Exception:  # noqa: BLE001 - query gia' risposta/scaduta
+        logger.warning("query.answer fallito", exc_info=True)
+
+
+async def _deliver(query, text: str, reply_markup=None, prefer_edit: bool = True) -> None:
+    """Conferma SEMPRE visibile: edita il messaggio del bottone, in fallback un nuovo messaggio.
+
+    Se non si puo' inviare nulla l'eccezione si propaga: il global handler
+    (`on_error`) notifica nella chat invece di restare silenzioso.
+    """
+    if prefer_edit and query.message is not None:
+        try:
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            return
+        except Exception as e:  # noqa: BLE001
+            if "not modified" in str(e).lower():
+                return  # la conferma e' gia' sul messaggio (doppio tap)
+            logger.warning("edit_message_text fallito: provo come nuovo messaggio", exc_info=True)
+    if query.message is None:
+        raise RuntimeError("Nessun messaggio a cui inviare la conferma")
+    await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+
 def _authorized(settings: Settings):
     async def guard(update: Update) -> bool:
         if not settings.telegram_allowed_chat_ids:
@@ -160,7 +267,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/sell SYMBOL [importo] - vendita simulata (tutta se l'importo e' omesso)\n"
         "   es: /sell PEPE/USDT | /sell PEPE/USDT 200\n\n"
         "🟢BUY / 🔴SELL: operazioni simulate (paper trading)\n"
-        "Il BUY ti chiede quanto investire (preset o /buy per un importo libero)"
+        "Il BUY ti chiede quanto investire (preset o /buy per un importo libero)\n\n"
+        f"🕓 Bot avviato: {STARTED_AT:%d/%m %H:%M} — se questa data è più vecchia "
+        "delle modifiche al codice, il bot gira con codice non ricaricato: riavvialo"
     )
 
 
@@ -257,22 +366,20 @@ async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 f"Importo libero: <code>/buy {symbol} 350</code>"
             )
             markup = _amount_keyboard(symbol, pf.cash, settings.position_pct)
-            if query.message and query.message.reply_markup and \
-                    len(query.message.reply_markup.inline_keyboard) > 1:
-                # lista multi-simbolo (/portfolio, /signal senza argomenti): la scelta
-                # arriva come nuovo messaggio, così la lista resta usabile
-                await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
-            else:
-                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
-            await query.answer()
+            # lista multi-simbolo (/portfolio, /signal senza argomenti): la scelta
+            # arriva come nuovo messaggio, così la lista resta usabile
+            multi = bool(query.message and query.message.reply_markup
+                         and len(query.message.reply_markup.inline_keyboard) > 1)
+            await _answer(query)
+            await _deliver(query, text, markup, prefer_edit=not multi)
         except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
             logger.exception("Scelta importo fallita")
-            await query.answer(f"Errore: {e}", show_alert=True)
+            await _answer(query, f"Errore: {e}", alert=True)
         return
 
     if action == "bcancel":
-        await query.answer()
-        await query.edit_message_text("✖ Operazione annullata.")
+        await _answer(query)
+        await _deliver(query, "✖ Operazione annullata.")
         return
 
     if action in ("buya", "buyp"):  # esecuzione con importo scelto
@@ -291,14 +398,17 @@ async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 raise ValueError("Cash insufficiente")
             pos = pf.buy(symbol, price, invested, settings.commission_pct, settings.slippage_pct)
             pf.save()
-            await query.answer()
-            await query.edit_message_text(
-                _fmt_buy(symbol, requested, invested, pos, pf.cash), parse_mode=ParseMode.HTML)
         except ValueError as e:
-            await query.answer(str(e), show_alert=True)
+            await _answer(query, str(e), alert=True)
+            return
         except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
             logger.exception("Operazione simulata fallita")
-            await query.answer(f"Errore: {e}", show_alert=True)
+            await _answer(query, f"Errore: {e}", alert=True)
+            return
+        await _answer(query)
+        # la conferma edita il messaggio della scelta importo; se non si puo',
+        # arriva come nuovo messaggio (mai silenzio dopo un acquisto riuscito)
+        await _deliver(query, _fmt_buy(symbol, requested, invested, pos, pf.cash))
         return
 
     # vendita (e casi sconosciuti, come prima)
@@ -312,19 +422,18 @@ async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             msg = _fmt_sell(symbol, trade, pf.cash, pf)
         else:
             msg = f"Azione sconosciuta: {action}"
-        await query.answer()
-        markup = query.message.reply_markup if query.message else None
-        if markup and len(markup.inline_keyboard) > 1:
-            # lista multi-simbolo (/portfolio, /signal senza argomenti): la conferma
-            # arriva come nuovo messaggio, così la lista e i suoi bottoni restano usabili
-            await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
-        else:
-            await query.edit_message_text(msg, parse_mode=ParseMode.HTML)
     except ValueError as e:
-        await query.answer(str(e), show_alert=True)
+        await _answer(query, str(e), alert=True)
+        return
     except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
         logger.exception("Operazione simulata fallita")
-        await query.answer(f"Errore: {e}", show_alert=True)
+        await _answer(query, f"Errore: {e}", alert=True)
+        return
+    await _answer(query)
+    markup = query.message.reply_markup if query.message else None
+    # lista multi-simbolo (/portfolio, /signal senza argomenti): la conferma
+    # arriva come nuovo messaggio, così la lista e i suoi bottoni restano usabili
+    await _deliver(query, msg, prefer_edit=not (markup and len(markup.inline_keyboard) > 1))
 
 
 async def cmd_buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -570,12 +679,38 @@ async def watch_loop(app: Application) -> None:
                     logger.exception("Watch: invio fallito verso %s", cid)
 
 
+async def on_error(update: Update | None, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global error handler: nessun errore deve restare silenzioso per l'utente.
+
+    Logga il traceback e notifica nella chat quando e' possibile (comandi e
+    bottoni), così un'eccezione non si traduce in "non risponde più".
+    """
+    err = context.error
+    logger.error("Errore non gestito nel bot: %r", err,
+                 exc_info=(type(err), err, err.__traceback__) if err is not None else None)
+    try:
+        message = update.effective_message if update else None
+        if message is not None:
+            await message.reply_text(f"❌ Errore interno: {html.escape(str(err))}")
+    except Exception:  # noqa: BLE001 - niente da fare se la chat non risponde
+        logger.exception("Notifica di errore non inviata")
+
+
+def _run_until_interrupted(coro_factory) -> None:
+    """Esegue il loop principale: Ctrl-C termina con un log pulito, senza traceback."""
+    try:
+        asyncio.run(coro_factory())
+    except KeyboardInterrupt:
+        logger.info("🛑 Bot interrotto (Ctrl-C): arresto pulito.")
+
+
 def main() -> None:
     settings = load_settings()
     if not settings.telegram_token:
         raise SystemExit("TELEGRAM_BOT_TOKEN mancante: copia .env.example in .env e inserisci il token di @BotFather")
 
     guard = _authorized(settings)
+    acquire_instance_lock()
 
     async def wrapped(handler):
         async def inner(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -602,6 +737,7 @@ def main() -> None:
         ]:
             app.add_handler(CommandHandler(name, await wrapped(handler)))
         app.add_handler(CallbackQueryHandler(await wrapped(cb_trade)))
+        app.add_error_handler(on_error)
         await app.initialize()
         await app.start()
         await app.updater.start_polling()
@@ -609,7 +745,10 @@ def main() -> None:
         logger.info("Bot Telegram avviato.")
         await asyncio.Event().wait()
 
-    asyncio.run(build())
+    try:
+        _run_until_interrupted(build)
+    finally:
+        release_instance_lock()
 
 
 if __name__ == "__main__":

@@ -168,9 +168,33 @@ e spuntata prima di passare alla successiva.
       - [x] 10.4 Test (+29: parsing simbolo/importo, tastiera importi, limiti
             Telegram callback, vendita parziale). Suite: **214 test**
       - [x] 10.5 Docs (README, help del bot)
+      - [x] 10.6 Feedback **mai silenzioso**: `_answer` (ack del callback che non fa
+            fallire il flusso, niente doppie risposte), `_deliver` (edita il messaggio
+            e in fallback invia un nuovo messaggio; su "not modified" non duplica),
+            global handler `on_error` che logga e notifica in chat, e `/help` con
+            l'orario di avvio del processo (per riconoscere un bot vecchio).
+            Suite: **223 test**
+      - [x] 10.7 Singola istanza + uscita pulita: lock `bot.pid` (secondo avvio →
+            `SystemExit` col PID dell'istanza attiva; lock stale o corrotto viene
+            sostituito, mai quello di un'altra istanza viva), `_run_until_interrupted`
+            (Ctrl-C → log pulito, niente `CancelledError`/`KeyboardInterrupt`), hint
+            in italiano sul `Conflict` di PTB. Test end-to-end: secondo avvio rifiutato
+            prima del polling (nessun 409). Suite: **239 test**
 
 ## Note di esecuzione
 
+- **2026-11-03: "nessuna conferma di acquisto" = bot con codice vecchio.** Sintomo:
+  il processo era partito alle 01:39, i comandi `/buy`/`/sell` erano stati scritti
+  alle 02:13 e **Telegram ignora silenziosamente i comandi non registrati** (nessuna
+  risposta, nessun errore). Dopo ogni modifica al codice **riavviare il bot**;
+  `/help` ora riporta l'orario di avvio per scoprire subito un processo vecchio.
+  Introdotto anche `on_error` globale: nessun errore deve tradursi in silenzio.
+- **2026-11-03: due istanze = HTTP 409 Conflict.** Un secondo poller sullo stesso
+  token fa fallire il polling di entrambi (il bot smette di rispondere a
+  intermittenza). Ora `bot.pid` rifiuta il secondo avvio con un messaggio chiaro
+  ("kill <PID>"), prima ancora del polling; Ctrl-C termina senza traceback (prima
+  stampava `CancelledError` + `KeyboardInterrupt`) e il `Conflict` di PTB viene
+  accompagnato da un hint in italiano nel log.
 - **2026-11: sorgente dati spostata da Binance a OKX** (`exchange.id: okx`, anche in
   `.env`). Corretto un bug di paginazione scoperto nel passaggio: OKX ritorna batch
   da max 300 candele e il loop si fermava al primo batch parziale. I risultati delle

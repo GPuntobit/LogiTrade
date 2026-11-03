@@ -1,8 +1,12 @@
-"""Test dei comandi /buy e /sell: parsing argomenti, tastiera importi, vendita parziale."""
+"""Test dei comandi /buy e /sell: parsing argomenti, tastiera importi, vendita parziale,
+conferme mai silenziose (_answer/_deliver) e global error handler."""
+
+import asyncio
 
 import pytest
 
-from logitrade.telegram_bot import _amount_keyboard, normalize_symbol, parse_amount
+from logitrade.telegram_bot import (_answer, _amount_keyboard, _deliver, normalize_symbol,
+                                    on_error, parse_amount)
 
 FEE = 0.1   # %
 SLIP = 0.05  # %
@@ -82,3 +86,98 @@ class TestAmountKeyboard:
         # Telegram limita callback_data a 64 byte
         datas = self._datas(_amount_keyboard("BABYDOGE/USDT", cash=1_000.0, position_pct=25.0))
         assert all(len(d.encode()) <= 64 for d in datas)
+
+
+class FakeMessage:
+    def __init__(self, reply_markup=None):
+        self.reply_markup = reply_markup
+        self.replies = []
+
+    async def reply_text(self, text, parse_mode=None, reply_markup=None):
+        self.replies.append((text, parse_mode, reply_markup))
+
+
+class FakeQuery:
+    def __init__(self, edit_error=None, message=True, answer_error=None):
+        self.answers = []
+        self.edits = []
+        self.edit_error = edit_error
+        self.answer_error = answer_error
+        self.message = FakeMessage() if message else None
+
+    async def answer(self, text=None, show_alert=False):
+        if self.answer_error:
+            raise self.answer_error
+        self.answers.append((text, show_alert))
+
+    async def edit_message_text(self, text, parse_mode=None, reply_markup=None):
+        if self.edit_error:
+            raise self.edit_error
+        self.edits.append(text)
+
+
+class TestAnswer:
+    def test_answer_records(self):
+        q = FakeQuery()
+        asyncio.run(_answer(q, "ok", alert=True))
+        assert q.answers == [("ok", True)]
+
+    def test_answer_swallows_failure(self):
+        # doppia risposta/query scaduta: non deve far fallire l'operazione
+        q = FakeQuery(answer_error=RuntimeError("query is too old"))
+        asyncio.run(_answer(q))  # non solleva
+        assert q.answers == []
+
+
+class TestDeliver:
+    def test_edits_message_by_default(self):
+        q = FakeQuery()
+        asyncio.run(_deliver(q, "<b>conferma</b>"))
+        assert q.edits == ["<b>conferma</b>"]
+        assert q.message.replies == []
+
+    def test_falls_back_to_new_message_when_edit_fails(self):
+        # messaggio non editabile (troppo vecchio): la conferma deve arrivare lo stesso
+        q = FakeQuery(edit_error=RuntimeError("message can't be edited"))
+        asyncio.run(_deliver(q, "conferma"))
+        assert q.edits == []
+        assert [r[0] for r in q.message.replies] == ["conferma"]
+
+    def test_not_modified_is_not_redelivered(self):
+        # doppio tap: la conferma e' gia' sul messaggio, niente duplicato
+        q = FakeQuery(edit_error=RuntimeError("Message is not modified"))
+        asyncio.run(_deliver(q, "conferma"))
+        assert q.message.replies == []
+
+    def test_prefer_edit_false_replies_new_message(self):
+        q = FakeQuery()
+        asyncio.run(_deliver(q, "conferma", prefer_edit=False))
+        assert q.edits == []
+        assert len(q.message.replies) == 1
+
+    def test_raises_without_message_so_on_error_notifies(self):
+        q = FakeQuery(message=False)
+        with pytest.raises(RuntimeError, match="Nessun messaggio"):
+            asyncio.run(_deliver(q, "conferma"))
+
+
+class _Ctx:
+    def __init__(self, error):
+        self.error = error
+
+
+class _Update:
+    def __init__(self, message):
+        self.effective_message = message
+
+
+class TestErrorHandler:
+    def test_notifies_chat(self):
+        upd = _Update(FakeMessage())
+        asyncio.run(on_error(upd, _Ctx(RuntimeError("boom <x>"))))
+        text = upd.effective_message.replies[0][0]
+        assert "Errore interno" in text
+        assert "boom &lt;x&gt;" in text  # HTML escaped
+
+    def test_without_message_does_not_raise(self):
+        asyncio.run(on_error(None, _Ctx(RuntimeError("boom"))))
