@@ -140,6 +140,21 @@ class TestPortfolioReadonly:
         assert "PEPE/USDT" in text
 
 
+class TestHelpHeader:
+    def test_shows_active_strategy_from_config(self, monkeypatch):
+        from helpers import make_settings
+        update = SimpleNamespace(message=_FakeMessage())
+        ctx = SimpleNamespace(bot_data={
+            "settings": make_settings(strategy_family="breakout", timeframe="1d")})
+        asyncio.run(tb.cmd_help(update, ctx))
+        text, kwargs = update.message.calls[-1]
+        assert "Strategia attiva: <b>breakout</b>" in text  # niente piu' "RSI + MACD" fisso
+        assert "timeframe 1d" in text
+        assert "/buy" in text and "/sell" in text
+        assert "portafoglio simulato (solo lettura)" in text
+        assert kwargs.get("parse_mode") == tb.ParseMode.HTML
+
+
 class TestConflictHintFilter:
     def _record(self, exc_info=None):
         return logging.LogRecord("telegram.ext.Updater", logging.ERROR, __file__, 42,

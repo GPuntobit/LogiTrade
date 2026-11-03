@@ -167,7 +167,9 @@ e spuntata prima di passare alla successiva.
             se l'importo supera la posizione
       - [x] 10.4 Test (+29: parsing simbolo/importo, tastiera importi, limiti
             Telegram callback, vendita parziale). Suite: **214 test**
-      - [x] 10.5 Docs (README, help del bot)
+      - [x] 10.5 Docs (README; help del bot con header dinamico: strategia e
+            timeframe attivi letti dalla config, non piu' il fisso "RSI + MACD").
+            Suite: **242 test**
       - [x] 10.6 Feedback **mai silenzioso**: `_answer` (ack del callback che non fa
             fallire il flusso, niente doppie risposte), `_deliver` (edita il messaggio
             e in fallback invia un nuovo messaggio; su "not modified" non duplica),

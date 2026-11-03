@@ -252,15 +252,17 @@ def _authorized(settings: Settings):
 
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = ctx.bot_data["settings"]
     await update.message.reply_text(
-        "🤖 LogiTrade - backtest meme coin RSI + MACD\n\n"
+        f"🤖 LogiTrade — meme coin: backtest, segnali e paper trading\n"
+        f"Strategia attiva: <b>{settings.strategy_family}</b> · timeframe {settings.timeframe}\n\n"
         "/symbols - lista simboli monitorati\n"
         "/backtest SYMBOL [tf] [data] - backtest singolo\n"
         "   es: /backtest PEPE/USDT 1h 2024-01-01\n"
         "/scan [tf] - backtest di tutti i simboli\n"
         "/signal [SYMBOL] [tf] - segnale live sulla candela chiusa\n"
         "/watch [on [tf] | off] - alert automatici quando parte un segnale\n"
-        "/portfolio - portafoglio simulato\n"
+        "/portfolio - portafoglio simulato (solo lettura)\n"
         "/auto [on [tf] | off] - buy/sell automatici simulati sui segnali\n"
         "/buy SYMBOL [importo] - acquisto simulato con importo scelto\n"
         "   es: /buy PEPE/USDT 500 | /buy PEPE 25% | /buy PEPE (position_pct)\n"
@@ -269,7 +271,8 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "🟢BUY / 🔴SELL: operazioni simulate (paper trading)\n"
         "Il BUY ti chiede quanto investire (preset o /buy per un importo libero)\n\n"
         f"🕓 Bot avviato: {STARTED_AT:%d/%m %H:%M} — se questa data è più vecchia "
-        "delle modifiche al codice, il bot gira con codice non ricaricato: riavvialo"
+        "delle modifiche al codice, il bot gira con codice non ricaricato: riavvialo",
+        parse_mode=ParseMode.HTML,
     )
 
 

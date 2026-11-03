@@ -1,6 +1,7 @@
 # LogiTrade 🐕
 
-Bot di **backtesting per meme coin** con strategia **RSI + MACD**, interfaccia **Telegram** e CLI.
+Bot di **backtesting per meme coin** con famiglie di strategia **`breakout`**
+(Donchian, attiva di default) e **`rsi_macd`**, interfaccia **Telegram** e CLI.
 
 ## Strategia
 
@@ -148,7 +149,8 @@ formazione. Nessun ordine viene eseguito: solo notifiche.
 
 ## Configurazione
 
-Tutto in `config.yaml`: simboli, timeframe, parametri RSI/MACD, filtro di trend
+Tutto in `config.yaml`: simboli, timeframe, parametri di strategia (`strategy.family`:
+`breakout` o `rsi_macd`, con i relativi parametri), filtro di trend
 (`trend_sma_period`/`trend_slope_bars`, 0 = off), rischio (size posizione, SL/TP),
 intervallo dei controlli di `/watch` (`signal.check_interval_minutes`).
 
