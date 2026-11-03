@@ -101,7 +101,8 @@ Poi su Telegram:
 - `/signal PEPE/USDT 4h` — dettaglio segnale su un simbolo, con SL/TP suggeriti
 - `/watch on 1h` — alert automatici quando parte un segnale di ingresso/uscita
 - `/watch off` — disattiva gli alert
-- `/portfolio` — portafoglio simulato (cash, posizioni aperte, PnL)
+- `/portfolio` — portafoglio simulato (cash, posizioni aperte, PnL), in **solo
+  lettura**: niente bottoni, risposta più rapida
 - `/buy PEPE/USDT 500` — **acquisto simulato con importo scelto**: `/buy SYMBOL [importo]`,
   importo in USDT (`500`), in percentuale del cash (`25%`) oppure omesso
   (`position_pct` della config). Il simbolo si può scrivere anche senza quota
@@ -114,11 +115,12 @@ Poi su Telegram:
   (come il backtest). `/auto off` per disattivare
 
 I bottoni **🟢 BUY** e **🔴 SELL** compaiono sui messaggi di `/signal` (singolo
-simbolo e scan di tutti), su `/portfolio` e sugli alert di `/watch`. Il **SELL**
-esegue subito la chiusura della posizione; il **BUY** prima apre la **scelta
-dell'importo** (preset in USDT ≤ cash disponibile, `% del cash`, `Tutto il cash`,
-`✖ Annulla`) e solo alla scelta esegue l'acquisto — per un importo libero si usa
-`/buy`. Tutte le operazioni sono **simulate** (paper trading)
+simbolo e scan di tutti) e sugli alert di `/watch`; **`/portfolio` è solo
+lettura** — per operare usi i bottoni sui segnali oppure i comandi `/buy` e
+`/sell`. Il **SELL** esegue subito la chiusura della posizione; il **BUY** prima
+apre la **scelta dell'importo** (preset in USDT ≤ cash disponibile, `% del cash`,
+`Tutto il cash`, `✖ Annulla`) e solo alla scelta esegue l'acquisto — per un
+importo libero si usa `/buy`. Tutte le operazioni sono **simulate** (paper trading)
 su un portafoglio virtuale salvato in `paper_portfolio.json`, applicando le stesse
 commissioni e slippage del backtest. **Nessun ordine reale viene inviato
 all'exchange** — per il trading reale servirebbe un progetto dedicato con API key
@@ -136,6 +138,9 @@ avvio del processo; i log finiscono in `bot.log` (gitignored).
 avvio con un messaggio chiaro (PID incluso), perché Telegram rifiuta due poller
 sullo stesso token (HTTP 409 Conflict). Per fermare l'istanza attiva:
 `kill $(cat bot.pid)`. Ctrl-C termina il bot pulitamente, senza traceback.
+
+Le chiamate di rete girano **in thread** (prezzi e segnali in parallelo): anche
+durante `/scan` o `/backtest` il bot continua a rispondere subito agli altri comandi.
 
 I segnali live usano le candele più recenti dell'exchange (niente cache) e valutano
 la strategia sull'ultima candela **chiusa**, così il segnale non cambia durante la

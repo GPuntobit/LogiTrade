@@ -294,7 +294,8 @@ async def cmd_backtest(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     status = await update.message.reply_text(f"⏳ Backtest {symbol} ({timeframe}) in corso...")
     try:
-        out = run_symbol(symbol, settings, timeframe, since)
+        # in thread: il loop resta libero e gli altri comandi rispondono subito
+        out = await asyncio.to_thread(run_symbol, symbol, settings, timeframe, since)
         report = format_report(out.symbol, out.timeframe, out.since, out.result)
         await status.delete()
         await update.message.reply_text(report, parse_mode=ParseMode.HTML)
@@ -315,7 +316,7 @@ async def cmd_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     summary = [f"📊 <b>Scan {timeframe}</b> (dal {settings.since})", ""]
     for symbol in settings.symbols:
         try:
-            out = run_symbol(symbol, settings, timeframe)
+            out = await asyncio.to_thread(run_symbol, symbol, settings, timeframe)
             r = out.result
             summary.append(
                 f"{symbol}: netto <b>{r.total_return_pct:+.2f}%</b> | dd {r.max_drawdown_pct:.1f}% | "
@@ -328,21 +329,24 @@ async def cmd_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Portafoglio in SOLO LETTURA: niente bottoni BUY/SELL, prezzi in parallelo."""
     settings: Settings = ctx.bot_data["settings"]
     pf = Portfolio.load(initial_cash=settings.initial_cash)
     status = await update.message.reply_text("⏳ Valutazione portafoglio...")
+    # fetch prezzi in thread e in parallelo: niente blocchi del loop, risposta rapida
+    held = list(pf.positions)
+    results = await asyncio.gather(
+        *(asyncio.to_thread(fetch_last_price, s, settings.exchange_id) for s in held),
+        return_exceptions=True)
     prices: dict[str, float] = {}
-    for symbol in pf.positions:
-        try:
-            prices[symbol] = fetch_last_price(symbol, settings.exchange_id)
-        except Exception:  # noqa: BLE001
-            logger.exception("Prezzo non disponibile per %s", symbol)
+    for symbol, res in zip(held, results):
+        if isinstance(res, BaseException):
+            logger.warning("Prezzo non disponibile per %s: %r", symbol, res)
+        else:
+            prices[symbol] = res
     await status.delete()
-    await update.message.reply_text(format_portfolio(pf, prices), parse_mode=ParseMode.HTML,
-                                    reply_markup=_trade_keyboard(
-                                        list(pf.positions) + [s for s in settings.symbols
-                                                             if s not in pf.positions],
-                                        holdings=set(pf.positions)))
+    # solo lettura: per operare ci sono i bottoni sui segnali e i comandi /buy e /sell
+    await update.message.reply_text(format_portfolio(pf, prices), parse_mode=ParseMode.HTML)
 
 
 async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -385,7 +389,7 @@ async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if action in ("buya", "buyp"):  # esecuzione con importo scelto
         symbol, _, spec = rest.partition(":")
         try:
-            price = fetch_last_price(symbol, settings.exchange_id)
+            price = await asyncio.to_thread(fetch_last_price, symbol, settings.exchange_id)
             pf = Portfolio.load(initial_cash=settings.initial_cash)
             if action == "buyp":
                 requested = pf.cash * settings.position_pct / 100
@@ -414,7 +418,7 @@ async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     # vendita (e casi sconosciuti, come prima)
     symbol = rest
     try:
-        price = fetch_last_price(symbol, settings.exchange_id)
+        price = await asyncio.to_thread(fetch_last_price, symbol, settings.exchange_id)
         pf = Portfolio.load(initial_cash=settings.initial_cash)
         if action == "sell":
             trade = pf.sell(symbol, price, settings.commission_pct, settings.slippage_pct)
@@ -450,7 +454,7 @@ async def cmd_buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         symbol = normalize_symbol(args[0])
-        price = fetch_last_price(symbol, settings.exchange_id)
+        price = await asyncio.to_thread(fetch_last_price, symbol, settings.exchange_id)
         pf = Portfolio.load(initial_cash=settings.initial_cash)
         if pf.cash <= 0:
             raise ValueError("Cash insufficiente")
@@ -498,7 +502,7 @@ async def cmd_sell(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         pos = pf.positions.get(symbol)
         if pos is None:
             raise ValueError(f"Nessuna posizione aperta per {symbol}")
-        price = fetch_last_price(symbol, settings.exchange_id)
+        price = await asyncio.to_thread(fetch_last_price, symbol, settings.exchange_id)
         # '%' sulla posizione: valore netto attuale (dopo slippage e commissioni)
         pct_base = pos.qty * price * (1 - settings.slippage_pct / 100) \
             * (1 - settings.commission_pct / 100)
@@ -573,7 +577,7 @@ async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             return
         status = await update.message.reply_text(f"⏳ Controllo segnale {symbol} ({tf})...")
         try:
-            snap = check_signal(symbol, settings, tf)
+            snap = await asyncio.to_thread(check_signal, symbol, settings, tf)
             await status.delete()
             await update.message.reply_text(format_signal(snap, settings), parse_mode=ParseMode.HTML,
                                             reply_markup=_trade_keyboard([symbol]))
@@ -586,12 +590,15 @@ async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     tf = settings.timeframe
     status = await update.message.reply_text(f"⏳ Controllo segnali ({tf})...")
     lines = [f"📡 <b>Segnali live</b> ({tf}) — candela chiusa", ""]
-    for symbol in settings.symbols:
-        try:
-            snap = check_signal(symbol, settings, tf)
-            lines.append(format_signal_line(snap))
-        except Exception as e:  # noqa: BLE001
-            lines.append(f"{symbol}: ❌ {html.escape(str(e))}")
+    # tutti i controlli in parallelo (thread): scan rapido e loop non bloccato
+    results = await asyncio.gather(
+        *(asyncio.to_thread(check_signal, s, settings, tf) for s in settings.symbols),
+        return_exceptions=True)
+    for symbol, res in zip(settings.symbols, results):
+        if isinstance(res, BaseException):
+            lines.append(f"{symbol}: ❌ {html.escape(str(res))}")
+        else:
+            lines.append(format_signal_line(res))
     await status.delete()
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML,
                                     reply_markup=_trade_keyboard(settings.symbols))
@@ -645,7 +652,7 @@ async def watch_loop(app: Application) -> None:
             continue
         for symbol in settings.symbols:
             try:
-                snap = check_signal(symbol, settings, watch["timeframe"])
+                snap = await asyncio.to_thread(check_signal, symbol, settings, watch["timeframe"])
             except Exception:  # noqa: BLE001
                 logger.exception("Watch: controllo fallito per %s", symbol)
                 continue

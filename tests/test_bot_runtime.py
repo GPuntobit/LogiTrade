@@ -1,7 +1,10 @@
-"""Test della singola istanza del bot (bot.pid) e dell'uscita pulita con Ctrl-C."""
+"""Test runtime del bot: singola istanza (bot.pid), uscita pulita con Ctrl-C,
+interfaccia (/portfolio in solo lettura) e filtro del Conflict di Telegram."""
 
+import asyncio
 import logging
 import os
+from types import SimpleNamespace
 
 import pytest
 from telegram.error import Conflict
@@ -76,6 +79,65 @@ class TestRunUntilInterrupted:
         monkeypatch.setattr(tb.asyncio, "run", ran.append)
         tb._run_until_interrupted(lambda: "coro")
         assert ran == ["coro"]
+
+
+class _FakeStatus:
+    async def delete(self):
+        pass
+
+    async def edit_text(self, *args, **kwargs):
+        pass
+
+
+class _FakeMessage:
+    def __init__(self):
+        self.calls = []
+
+    async def reply_text(self, text, **kwargs):
+        self.calls.append((text, kwargs))
+        return _FakeStatus()
+
+
+class TestPortfolioReadonly:
+    """/portfolio deve solo mostrare i dati: nessun bottone BUY/SELL (richiesta
+    dell'utente) — messaggio più leggero e risposta più rapida."""
+
+    def _run(self, monkeypatch, positions=None):
+        from helpers import make_settings
+
+        pos_map = positions or {}
+
+        class StubPortfolio:
+            cash = 10_000.0
+            history: list = []
+
+            @classmethod
+            def load(cls, **kwargs):
+                return cls()
+
+        StubPortfolio.positions = pos_map
+
+        monkeypatch.setattr(tb, "Portfolio", StubPortfolio)
+        update = SimpleNamespace(message=_FakeMessage())
+        ctx = SimpleNamespace(bot_data={"settings": make_settings()})
+        asyncio.run(tb.cmd_portfolio(update, ctx))
+        return update.message.calls
+
+    def test_no_trade_keyboard(self, monkeypatch):
+        text, kwargs = self._run(monkeypatch)[-1]
+        assert kwargs.get("reply_markup") is None  # niente bottoni BUY/SELL
+        assert "Nessuna posizione aperta" in text
+
+    def test_no_trade_keyboard_with_positions(self, monkeypatch):
+        # anche con posizioni aperte resta solo lettura
+        from logitrade.paper import Position
+        pos = {"PEPE/USDT": Position(symbol="PEPE/USDT", qty=10.0,
+                                      entry_price=0.001, entry_time="2026-11-03T00:00:00+00:00")}
+        monkeypatch.setattr(tb, "fetch_last_price",
+                            lambda symbol, exchange_id: 0.002)  # niente rete nel test
+        text, kwargs = self._run(monkeypatch, positions=pos)[-1]
+        assert kwargs.get("reply_markup") is None
+        assert "PEPE/USDT" in text
 
 
 class TestConflictHintFilter:

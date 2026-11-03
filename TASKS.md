@@ -180,6 +180,12 @@ e spuntata prima di passare alla successiva.
             (Ctrl-C → log pulito, niente `CancelledError`/`KeyboardInterrupt`), hint
             in italiano sul `Conflict` di PTB. Test end-to-end: secondo avvio rifiutato
             prima del polling (nessun 409). Suite: **239 test**
+      - [x] 10.8 `/portfolio` in **solo lettura** (richiesta utente: niente bottoni
+            BUY/SELL sul messaggio del portafoglio) + chiamate di rete fuori dal loop:
+            `asyncio.to_thread` per fetch prezzi/backtest/segnali e `gather` per
+            prezzi di `/portfolio` e scan segnali in parallelo — il bot risponde
+            subito agli altri comandi anche durante `/scan`. Test: `/portfolio`
+            senza `reply_markup`, con e senza posizioni. Suite: **241 test**
 
 ## Note di esecuzione
 
