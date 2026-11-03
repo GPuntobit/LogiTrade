@@ -156,6 +156,18 @@ e spuntata prima di passare alla successiva.
       - [x] 9.3 Test (12 nuovi: pyramiding, ciclo completo, cash esaurito, format).
             Suite: 173 test
       - [x] 9.4 Docs
+- [x] **10. Importo e simbolo liberi per buy/sell (paper trading)**
+      - [x] 10.1 Comandi `/buy SYMBOL [importo]` (USDT, `%` del cash, omesso =
+            `position_pct`) e `/sell SYMBOL [importo]` (omesso = tutta la posizione;
+            USDT o `%` della posizione). Simbolo normalizzabile (`/buy PEPE 500`)
+      - [x] 10.2 Bottone 🟢BUY in due step: scelta importo (preset ≤ cash, `% del cash`,
+            `Tutto il cash`, `✖ Annulla`) prima dell'esecuzione; SELL invariato
+      - [x] 10.3 `Portfolio.sell(..., usdt_amount=)`: vendita parziale con carico
+            invariato, PnL realized sulla sola parte venduta, chiusura automatica
+            se l'importo supera la posizione
+      - [x] 10.4 Test (+29: parsing simbolo/importo, tastiera importi, limiti
+            Telegram callback, vendita parziale). Suite: **214 test**
+      - [x] 10.5 Docs (README, help del bot)
 
 ## Note di esecuzione
 

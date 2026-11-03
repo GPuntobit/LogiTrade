@@ -85,26 +85,45 @@ class Portfolio:
         return pos
 
     def sell(self, symbol: str, price: float,
-             commission_pct: float = 0.1, slippage_pct: float = 0.05) -> dict:
-        """Chiude l'intera posizione per `symbol` e ritorna il riepilogo con PnL realized."""
+             commission_pct: float = 0.1, slippage_pct: float = 0.05,
+             usdt_amount: float | None = None) -> dict:
+        """Vende la posizione per `symbol`: tutta (default) o fino a `usdt_amount` USDT.
+
+        Con `usdt_amount` la vendita e' parziale: il prezzo di carico della posizione
+        residua resta invariato e il PnL realized riferisce solo alla parte venduta.
+        Un importo maggiore della posizione la chiude per intero.
+        Ritorna il riepilogo con PnL realized.
+        """
         pos = self.positions.get(symbol)
         if pos is None:
             raise ValueError(f"Nessuna posizione aperta per {symbol}")
         if price <= 0:
             raise ValueError("Prezzo deve essere positivo")
+        if usdt_amount is not None and usdt_amount <= 0:
+            raise ValueError("Importo deve essere positivo")
 
         fee = commission_pct / 100
         slip = slippage_pct / 100
         fill_price = price * (1 - slip)
-        proceeds = pos.qty * fill_price * (1 - fee)
-        cost = pos.qty * pos.entry_price
+        proceeds_full = pos.qty * fill_price * (1 - fee)
+        if usdt_amount is None or usdt_amount >= proceeds_full:
+            qty_sold = pos.qty            # vendita completa (o importo >= posizione)
+        else:
+            qty_sold = usdt_amount / (fill_price * (1 - fee))
+        proceeds = qty_sold * fill_price * (1 - fee)
+        cost = qty_sold * pos.entry_price
         pnl = proceeds - cost
 
+        remaining = pos.qty - qty_sold
+        if remaining <= pos.qty * 1e-9:
+            del self.positions[symbol]
+        else:
+            pos.qty = remaining
+
         self.cash += proceeds
-        del self.positions[symbol]
         self.history.append({"time": _now(), "side": "sell", "symbol": symbol,
-                             "price": fill_price, "qty": pos.qty, "usdt": proceeds, "pnl": pnl})
-        return {"symbol": symbol, "price": fill_price, "qty": pos.qty,
+                             "price": fill_price, "qty": qty_sold, "usdt": proceeds, "pnl": pnl})
+        return {"symbol": symbol, "price": fill_price, "qty": qty_sold,
                 "usdt": proceeds, "pnl": pnl}
 
     def auto_trade(self, symbol: str, status: str, price: float, position_pct: float = 25.0,

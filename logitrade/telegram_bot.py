@@ -9,8 +9,12 @@ Comandi:
   /watch [on [tf] | off]         - alert automatici ogni N minuti
   /portfolio                     - portafoglio simulato (paper trading)
   /auto [on [tf] | off]          - buy/sell automatici simulati sui segnali
+  /buy SYMBOL [importo]          - acquisto simulato con importo scelto
+                                   (es. /buy PEPE/USDT 500 · /buy PEPE 25%)
+  /sell SYMBOL [importo]         - vendita simulata (tutta se l'importo e' omesso)
 
 Bottoni 🟢BUY / 🔴SELL: operazioni SIMULATE, nessun ordine reale.
+Il BUY apre la scelta dell'importo (preset o /buy per un importo libero).
 """
 
 import asyncio
@@ -52,6 +56,82 @@ def _trade_keyboard(symbols: list[str], holdings: set[str] | None = None) -> Inl
     return InlineKeyboardMarkup(rows)
 
 
+# Importi predefiniti proposti dal bottone 🟢BUY (USDT)
+_AMOUNT_PRESETS = (100, 250, 500, 1000)
+
+
+def normalize_symbol(token: str, default_quote: str = "USDT") -> str:
+    """Normalizza l'argomento simbolo dei comandi: 'pepe' -> 'PEPE/USDT'."""
+    sym = token.strip().upper().replace("-", "/")
+    if "/" not in sym:
+        sym = f"{sym}/{default_quote}"
+    base, _, quote = sym.partition("/")
+    # alnum anche per evitare iniezioni HTML nei messaggi di conferma
+    if not base.isalnum() or not quote.isalnum():
+        raise ValueError(f"Simbolo non valido: {token} (uso: BASE/USDT, es. PEPE/USDT)")
+    return sym
+
+
+def parse_amount(token: str, cash: float, pct_base: float | None = None) -> float:
+    """Importo USDT da un argomento comando.
+
+    '500' -> 500 USDT;  '25%' -> 25% di `pct_base` (default: il cash disponibile).
+    """
+    raw = token.strip().replace(",", ".")
+    base = cash if pct_base is None else pct_base
+    try:
+        if raw.endswith("%"):
+            usdt = base * float(raw[:-1]) / 100
+        else:
+            usdt = float(raw)
+    except ValueError:
+        raise ValueError(f"Importo non valido: {token} (uso: 500 oppure 25%)") from None
+    if usdt <= 0:
+        raise ValueError("Importo deve essere positivo")
+    return usdt
+
+
+def _amount_keyboard(symbol: str, cash: float, position_pct: float) -> InlineKeyboardMarkup:
+    """Bottoni di scelta importo per 🟢BUY (solo valori <= cash disponibile)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    presets = [v for v in _AMOUNT_PRESETS if v <= cash]
+    for i in range(0, len(presets), 3):
+        rows.append([InlineKeyboardButton(f"{v:g} USDT", callback_data=f"buya:{symbol}:{v:g}")
+                     for v in presets[i:i + 3]])
+    pct_row = []
+    if cash * position_pct / 100 > 0:
+        pct_row.append(InlineKeyboardButton(f"{position_pct:g}% del cash",
+                                            callback_data=f"buyp:{symbol}"))
+    pct_row.append(InlineKeyboardButton("💰 Tutto il cash", callback_data=f"buya:{symbol}:all"))
+    rows.append(pct_row)
+    rows.append([InlineKeyboardButton("✖ Annulla", callback_data="bcancel")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _fmt_buy(symbol: str, requested: float, invested: float, pos, cash: float) -> str:
+    lines = [
+        f"🟢 <b>Acquisto SIMULATO</b> {symbol}",
+        f"Quantità: {pos.qty:.6g} @ {pos.entry_price:.8g}",
+        f"Investito: {invested:,.2f} USDT | Cash rimanente: {cash:,.2f} USDT",
+    ]
+    if invested < requested:
+        lines.append(f"⚠️ Importo richiesto {requested:,.2f} ridotto al cash disponibile.")
+    return "\n".join(lines)
+
+
+def _fmt_sell(symbol: str, trade: dict, cash: float, pf: Portfolio) -> str:
+    lines = [
+        f"🔴 <b>Vendita SIMULATA</b> {symbol}",
+        f"Quantità: {trade['qty']:.6g} @ {trade['price']:.8g}",
+        f"Incassato: {trade['usdt']:,.2f} USDT | PnL: {trade['pnl']:+,.2f} USDT",
+        f"Cash: {cash:,.2f} USDT",
+    ]
+    pos = pf.positions.get(symbol)
+    if pos:
+        lines.append(f"Posizione residua: {pos.qty:.6g} @ {pos.entry_price:.8g}")
+    return "\n".join(lines)
+
+
 def _authorized(settings: Settings):
     async def guard(update: Update) -> bool:
         if not settings.telegram_allowed_chat_ids:
@@ -74,8 +154,13 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/signal [SYMBOL] [tf] - segnale live sulla candela chiusa\n"
         "/watch [on [tf] | off] - alert automatici quando parte un segnale\n"
         "/portfolio - portafoglio simulato\n"
-        "/auto [on [tf] | off] - buy/sell automatici simulati sui segnali\n\n"
-        "🟢BUY / 🔴SELL: operazioni simulate (paper trading)"
+        "/auto [on [tf] | off] - buy/sell automatici simulati sui segnali\n"
+        "/buy SYMBOL [importo] - acquisto simulato con importo scelto\n"
+        "   es: /buy PEPE/USDT 500 | /buy PEPE 25% | /buy PEPE (position_pct)\n"
+        "/sell SYMBOL [importo] - vendita simulata (tutta se l'importo e' omesso)\n"
+        "   es: /sell PEPE/USDT | /sell PEPE/USDT 200\n\n"
+        "🟢BUY / 🔴SELL: operazioni simulate (paper trading)\n"
+        "Il BUY ti chiede quanto investire (preset o /buy per un importo libero)"
     )
 
 
@@ -152,35 +237,83 @@ async def cmd_portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Bottoni 🟢BUY / 🔴SELL: operazione SIMULATA sul portafoglio paper."""
+    """Bottoni 🟢BUY / 🔴SELL: operazioni SIMULATE sul portafoglio paper.
+
+    Il BUY non esegue subito: apre la scelta dell'importo (preset, % del cash o
+    tutto). L'esecuzione avviene su `buya:` (importo fisso/tutto) o `buyp:`
+    (position_pct della config). `bcancel` annulla.
+    """
     query = update.callback_query
     settings: Settings = ctx.bot_data["settings"]
-    action, _, symbol = query.data.partition(":")
+    action, _, rest = query.data.partition(":")
+
+    if action == "buy":  # scelta importo
+        symbol = rest
+        try:
+            pf = Portfolio.load(initial_cash=settings.initial_cash)
+            text = (
+                f"🟢 <b>Acquisto SIMULATO</b> {symbol}\n"
+                f"Scegli quanto investire — cash disponibile: {pf.cash:,.2f} USDT\n\n"
+                f"Importo libero: <code>/buy {symbol} 350</code>"
+            )
+            markup = _amount_keyboard(symbol, pf.cash, settings.position_pct)
+            if query.message and query.message.reply_markup and \
+                    len(query.message.reply_markup.inline_keyboard) > 1:
+                # lista multi-simbolo (/portfolio, /signal senza argomenti): la scelta
+                # arriva come nuovo messaggio, così la lista resta usabile
+                await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            else:
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            await query.answer()
+        except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
+            logger.exception("Scelta importo fallita")
+            await query.answer(f"Errore: {e}", show_alert=True)
+        return
+
+    if action == "bcancel":
+        await query.answer()
+        await query.edit_message_text("✖ Operazione annullata.")
+        return
+
+    if action in ("buya", "buyp"):  # esecuzione con importo scelto
+        symbol, _, spec = rest.partition(":")
+        try:
+            price = fetch_last_price(symbol, settings.exchange_id)
+            pf = Portfolio.load(initial_cash=settings.initial_cash)
+            if action == "buyp":
+                requested = pf.cash * settings.position_pct / 100
+            elif spec == "all":
+                requested = pf.cash
+            else:
+                requested = float(spec)
+            invested = min(requested, pf.cash)
+            if invested <= 0:
+                raise ValueError("Cash insufficiente")
+            pos = pf.buy(symbol, price, invested, settings.commission_pct, settings.slippage_pct)
+            pf.save()
+            await query.answer()
+            await query.edit_message_text(
+                _fmt_buy(symbol, requested, invested, pos, pf.cash), parse_mode=ParseMode.HTML)
+        except ValueError as e:
+            await query.answer(str(e), show_alert=True)
+        except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
+            logger.exception("Operazione simulata fallita")
+            await query.answer(f"Errore: {e}", show_alert=True)
+        return
+
+    # vendita (e casi sconosciuti, come prima)
+    symbol = rest
     try:
         price = fetch_last_price(symbol, settings.exchange_id)
         pf = Portfolio.load(initial_cash=settings.initial_cash)
-        if action == "buy":
-            usdt = pf.cash * settings.position_pct / 100
-            pos = pf.buy(symbol, price, usdt, settings.commission_pct, settings.slippage_pct)
-            pf.save()
-            msg = (
-                f"🟢 <b>Acquisto SIMULATO</b> {symbol}\n"
-                f"Quantità: {pos.qty:.6g} @ {pos.entry_price:.8g}\n"
-                f"Investito: {usdt:,.2f} USDT | Cash rimanente: {pf.cash:,.2f} USDT"
-            )
-        elif action == "sell":
+        if action == "sell":
             trade = pf.sell(symbol, price, settings.commission_pct, settings.slippage_pct)
             pf.save()
-            msg = (
-                f"🔴 <b>Vendita SIMULATA</b> {symbol}\n"
-                f"Quantità: {trade['qty']:.6g} @ {trade['price']:.8g}\n"
-                f"Incassato: {trade['usdt']:,.2f} USDT | PnL: {trade['pnl']:+,.2f} USDT\n"
-                f"Cash: {pf.cash:,.2f} USDT"
-            )
+            msg = _fmt_sell(symbol, trade, pf.cash, pf)
         else:
             msg = f"Azione sconosciuta: {action}"
         await query.answer()
-        markup = query.message.reply_markup
+        markup = query.message.reply_markup if query.message else None
         if markup and len(markup.inline_keyboard) > 1:
             # lista multi-simbolo (/portfolio, /signal senza argomenti): la conferma
             # arriva come nuovo messaggio, così la lista e i suoi bottoni restano usabili
@@ -192,6 +325,87 @@ async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
         logger.exception("Operazione simulata fallita")
         await query.answer(f"Errore: {e}", show_alert=True)
+
+
+async def cmd_buy(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Acquisto simulato con simbolo e importo scelti: /buy SYMBOL [importo]."""
+    settings: Settings = ctx.bot_data["settings"]
+    args = ctx.args or []
+    if not args:
+        await update.message.reply_text(
+            "Uso: /buy SYMBOL [importo]\n"
+            "   es: /buy PEPE/USDT 500  (500 USDT)\n"
+            "       /buy PEPE 25%        (25% del cash)\n"
+            "       /buy PEPE            (position_pct del cash)")
+        return
+
+    try:
+        symbol = normalize_symbol(args[0])
+        price = fetch_last_price(symbol, settings.exchange_id)
+        pf = Portfolio.load(initial_cash=settings.initial_cash)
+        if pf.cash <= 0:
+            raise ValueError("Cash insufficiente")
+        if len(args) > 1:
+            requested = parse_amount(args[1], pf.cash)
+        else:
+            requested = pf.cash * settings.position_pct / 100
+        invested = min(requested, pf.cash)
+        if invested <= 0:
+            raise ValueError("Cash insufficiente")
+        pos = pf.buy(symbol, price, invested, settings.commission_pct, settings.slippage_pct)
+        pf.save()
+    except ValueError as e:
+        await update.message.reply_text(f"⚠️ {e}")
+        return
+    except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
+        logger.exception("Acquisto simulato fallito")
+        await update.message.reply_text(f"❌ Errore: {html.escape(str(e))}")
+        return
+
+    msg = _fmt_buy(symbol, requested, invested, pos, pf.cash)
+    if symbol not in settings.symbols:
+        msg += f"\nℹ️ {symbol} non è tra i simboli monitorati: nessun segnale per esso."
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+async def cmd_sell(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Vendita simulata: /sell SYMBOL [importo USDT] (tutta se l'importo e' omesso)."""
+    settings: Settings = ctx.bot_data["settings"]
+    args = ctx.args or []
+    if not args:
+        pf = Portfolio.load(initial_cash=settings.initial_cash)
+        held = ", ".join(pf.positions) or "nessuna"
+        await update.message.reply_text(
+            "Uso: /sell SYMBOL [importo]\n"
+            "   es: /sell PEPE/USDT      (tutta la posizione)\n"
+            "       /sell PEPE/USDT 200  (vende fino a 200 USDT)\n"
+            "       /sell PEPE/USDT 50%  (metà della posizione)\n\n"
+            f"Posizioni aperte: {held}")
+        return
+
+    try:
+        symbol = normalize_symbol(args[0])
+        pf = Portfolio.load(initial_cash=settings.initial_cash)
+        pos = pf.positions.get(symbol)
+        if pos is None:
+            raise ValueError(f"Nessuna posizione aperta per {symbol}")
+        price = fetch_last_price(symbol, settings.exchange_id)
+        # '%' sulla posizione: valore netto attuale (dopo slippage e commissioni)
+        pct_base = pos.qty * price * (1 - settings.slippage_pct / 100) \
+            * (1 - settings.commission_pct / 100)
+        usdt_amount = parse_amount(args[1], pf.cash, pct_base) if len(args) > 1 else None
+        trade = pf.sell(symbol, price, settings.commission_pct, settings.slippage_pct,
+                        usdt_amount=usdt_amount)
+        pf.save()
+    except ValueError as e:
+        await update.message.reply_text(f"⚠️ {e}")
+        return
+    except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
+        logger.exception("Vendita simulata fallita")
+        await update.message.reply_text(f"❌ Errore: {html.escape(str(e))}")
+        return
+
+    await update.message.reply_text(_fmt_sell(symbol, trade, pf.cash, pf), parse_mode=ParseMode.HTML)
 
 
 async def cmd_auto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -384,7 +598,7 @@ def main() -> None:
             ("start", cmd_start), ("help", cmd_help), ("symbols", cmd_symbols),
             ("backtest", cmd_backtest), ("scan", cmd_scan),
             ("signal", cmd_signal), ("watch", cmd_watch), ("portfolio", cmd_portfolio),
-            ("auto", cmd_auto),
+            ("auto", cmd_auto), ("buy", cmd_buy), ("sell", cmd_sell),
         ]:
             app.add_handler(CommandHandler(name, await wrapped(handler)))
         app.add_handler(CallbackQueryHandler(await wrapped(cb_trade)))

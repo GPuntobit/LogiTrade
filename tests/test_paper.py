@@ -92,6 +92,62 @@ class TestSell:
         assert h["pnl"] < 0  # perdita
 
 
+class TestPartialSell:
+    def test_partial_sell_keeps_position_and_entry_price(self):
+        pf = Portfolio(cash=10_000.0)
+        pf.buy("X/USDT", price=100.0, usdt_amount=2_000.0,
+               commission_pct=FEE, slippage_pct=SLIP)
+        before = pf.positions["X/USDT"]
+        qty_before, entry_before = before.qty, before.entry_price  # valori (no alias)
+        trade = pf.sell("X/USDT", price=110.0, commission_pct=FEE, slippage_pct=SLIP,
+                        usdt_amount=500.0)
+        assert trade["usdt"] == pytest.approx(500.0)       # ricavi netti = importo chiesto
+        resid = pf.positions["X/USDT"]
+        assert resid.qty == pytest.approx(qty_before - trade["qty"])
+        assert resid.entry_price == pytest.approx(entry_before)      # carico invariato
+        assert pf.cash == pytest.approx(8_000.0 + 500.0)
+        assert trade["pnl"] == pytest.approx(500.0 - trade["qty"] * entry_before)
+
+    def test_partial_sell_history_records_qty_sold(self):
+        pf = Portfolio(cash=10_000.0)
+        pf.buy("X/USDT", price=100.0, usdt_amount=2_000.0)
+        trade = pf.sell("X/USDT", price=100.0, usdt_amount=1_000.0)
+        h = pf.history[-1]
+        assert h["qty"] == pytest.approx(trade["qty"])
+        assert h["usdt"] == pytest.approx(trade["usdt"])
+        assert len(pf.positions) == 1  # posizione ancora aperta
+
+    def test_amount_above_position_closes_it(self):
+        pf = Portfolio(cash=10_000.0)
+        pf.buy("X/USDT", price=100.0, usdt_amount=1_000.0)
+        pf.sell("X/USDT", price=100.0, usdt_amount=99_999.0)
+        assert pf.positions == {}
+
+    def test_repeated_partial_sells_sum_to_full(self):
+        pf = Portfolio(cash=10_000.0)
+        pf.buy("X/USDT", price=100.0, usdt_amount=3_000.0,
+               commission_pct=FEE, slippage_pct=SLIP)
+        qty0 = pf.positions["X/USDT"].qty
+        t1 = pf.sell("X/USDT", price=100.0, commission_pct=FEE, slippage_pct=SLIP,
+                     usdt_amount=1_000.0)
+        t2 = pf.sell("X/USDT", price=100.0, commission_pct=FEE, slippage_pct=SLIP,
+                     usdt_amount=2_000.0)
+        assert t1["qty"] + t2["qty"] == pytest.approx(qty0)
+        assert pf.positions == {}
+
+    def test_zero_amount_raises(self):
+        pf = Portfolio(cash=10_000.0)
+        pf.buy("X/USDT", price=100.0, usdt_amount=1_000.0)
+        with pytest.raises(ValueError, match="Importo"):
+            pf.sell("X/USDT", price=100.0, usdt_amount=0.0)
+
+    def test_negative_amount_raises(self):
+        pf = Portfolio(cash=10_000.0)
+        pf.buy("X/USDT", price=100.0, usdt_amount=1_000.0)
+        with pytest.raises(ValueError, match="Importo"):
+            pf.sell("X/USDT", price=100.0, usdt_amount=-10.0)
+
+
 class TestPersistence:
     def test_save_load_roundtrip(self, tmp_path):
         path = tmp_path / "portfolio.json"

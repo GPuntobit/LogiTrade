@@ -102,13 +102,23 @@ Poi su Telegram:
 - `/watch on 1h` — alert automatici quando parte un segnale di ingresso/uscita
 - `/watch off` — disattiva gli alert
 - `/portfolio` — portafoglio simulato (cash, posizioni aperte, PnL)
+- `/buy PEPE/USDT 500` — **acquisto simulato con importo scelto**: `/buy SYMBOL [importo]`,
+  importo in USDT (`500`), in percentuale del cash (`25%`) oppure omesso
+  (`position_pct` della config). Il simbolo si può scrivere anche senza quota
+  (`/buy PEPE 500` → PEPE/USDT)
+- `/sell PEPE/USDT 200` — **vendita simulata con importo scelto**: `/sell SYMBOL [importo]`,
+  in USDT (`200`) o in percentuale della posizione (`50%`); con l'importo omesso
+  chiude tutta la posizione
 - `/auto on 1d` — **buy/sell automatici simulati**: ENTRY → acquisto (25% del cash),
   EXIT → vendita della posizione aperta, eseguiti al prezzo di chiusura candela
   (come il backtest). `/auto off` per disattivare
 
 I bottoni **🟢 BUY** e **🔴 SELL** compaiono sui messaggi di `/signal` (singolo
-simbolo e scan di tutti), su `/portfolio` e sugli alert di `/watch`: eseguono
-operazioni **simulate** (paper trading)
+simbolo e scan di tutti), su `/portfolio` e sugli alert di `/watch`. Il **SELL**
+esegue subito la chiusura della posizione; il **BUY** prima apre la **scelta
+dell'importo** (preset in USDT ≤ cash disponibile, `% del cash`, `Tutto il cash`,
+`✖ Annulla`) e solo alla scelta esegue l'acquisto — per un importo libero si usa
+`/buy`. Tutte le operazioni sono **simulate** (paper trading)
 su un portafoglio virtuale salvato in `paper_portfolio.json`, applicando le stesse
 commissioni e slippage del backtest. **Nessun ordine reale viene inviato
 all'exchange** — per il trading reale servirebbe un progetto dedicato con API key
