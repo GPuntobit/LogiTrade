@@ -178,5 +178,10 @@ e spuntata prima di passare alla successiva.
   vuoto per simboli quotati DOPO la data `since` — aggiunto fallback con
   paginazione indietro + finestra a dimezzamento (2 test di regressione).
   Scan 8 simboli 1d breakout: somma +369%.
+- **2026-11: fix prezzo fermo in /portfolio** — `fetch_last_price` usava `last`
+  (ultimo prezzo di trade), che resta fermo a lungo sui mercati poco scambiati
+  (es. TURBO). Ora usa il **mid bid/ask** (book vivo), con fallback su `last`.
+  Nota: /signal e /auto mostrano/eseguono al prezzo di chiusura candela (di design,
+  come il backtest); per valori live serve il ticker.
 
 <!-- Aggiornare man mano che ogni task viene completata -->

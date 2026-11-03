@@ -106,8 +106,9 @@ Poi su Telegram:
   EXIT → vendita della posizione aperta, eseguiti al prezzo di chiusura candela
   (come il backtest). `/auto off` per disattivare
 
-Sui messaggi di `/signal` (singolo simbolo) e sugli alert di `/watch` compaiono i
-bottoni **🟢 BUY** e **🔴 SELL**: eseguono operazioni **simulate** (paper trading)
+I bottoni **🟢 BUY** e **🔴 SELL** compaiono sui messaggi di `/signal` (singolo
+simbolo e scan di tutti), su `/portfolio` e sugli alert di `/watch`: eseguono
+operazioni **simulate** (paper trading)
 su un portafoglio virtuale salvato in `paper_portfolio.json`, applicando le stesse
 commissioni e slippage del backtest. **Nessun ordine reale viene inviato
 all'exchange** — per il trading reale servirebbe un progetto dedicato con API key

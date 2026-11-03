@@ -35,11 +35,21 @@ logger = logging.getLogger(__name__)
 TIMEFRAMES = {"5m", "15m", "30m", "1h", "4h", "1d"}
 
 
-def _trade_keyboard(symbol: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🟢 BUY", callback_data=f"buy:{symbol}"),
-        InlineKeyboardButton("🔴 SELL", callback_data=f"sell:{symbol}"),
-    ]])
+def _trade_keyboard(symbols: list[str], holdings: set[str] | None = None) -> InlineKeyboardMarkup:
+    """Bottoni 🟢BUY/🔴SELL: una riga per simbolo.
+
+    Con `holdings` (simboli con posizione aperta) il SELL è mostrato solo per chi
+    ha qualcosa da vendere; senza `holdings` il SELL compare sempre.
+    """
+    multi = len(symbols) > 1
+    rows = []
+    for symbol in symbols:
+        suffix = f" {symbol}" if multi else ""
+        row = [InlineKeyboardButton(f"🟢 BUY{suffix}", callback_data=f"buy:{symbol}")]
+        if holdings is None or symbol in holdings:
+            row.append(InlineKeyboardButton(f"🔴 SELL{suffix}", callback_data=f"sell:{symbol}"))
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
 
 
 def _authorized(settings: Settings):
@@ -134,7 +144,11 @@ async def cmd_portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception:  # noqa: BLE001
             logger.exception("Prezzo non disponibile per %s", symbol)
     await status.delete()
-    await update.message.reply_text(format_portfolio(pf, prices), parse_mode=ParseMode.HTML)
+    await update.message.reply_text(format_portfolio(pf, prices), parse_mode=ParseMode.HTML,
+                                    reply_markup=_trade_keyboard(
+                                        list(pf.positions) + [s for s in settings.symbols
+                                                             if s not in pf.positions],
+                                        holdings=set(pf.positions)))
 
 
 async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -166,7 +180,13 @@ async def cb_trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             msg = f"Azione sconosciuta: {action}"
         await query.answer()
-        await query.edit_message_text(msg, parse_mode=ParseMode.HTML)
+        markup = query.message.reply_markup
+        if markup and len(markup.inline_keyboard) > 1:
+            # lista multi-simbolo (/portfolio, /signal senza argomenti): la conferma
+            # arriva come nuovo messaggio, così la lista e i suoi bottoni restano usabili
+            await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        else:
+            await query.edit_message_text(msg, parse_mode=ParseMode.HTML)
     except ValueError as e:
         await query.answer(str(e), show_alert=True)
     except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
@@ -233,7 +253,7 @@ async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             snap = check_signal(symbol, settings, tf)
             await status.delete()
             await update.message.reply_text(format_signal(snap, settings), parse_mode=ParseMode.HTML,
-                                            reply_markup=_trade_keyboard(symbol))
+                                            reply_markup=_trade_keyboard([symbol]))
         except Exception as e:  # noqa: BLE001 - errore da riportare all'utente
             logger.exception("Controllo segnale fallito")
             await status.edit_text(f"❌ Errore: {html.escape(str(e))}")
@@ -250,7 +270,8 @@ async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:  # noqa: BLE001
             lines.append(f"{symbol}: ❌ {html.escape(str(e))}")
     await status.delete()
-    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML,
+                                    reply_markup=_trade_keyboard(settings.symbols))
 
 
 async def cmd_watch(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

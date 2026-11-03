@@ -114,7 +114,8 @@ def format_portfolio(pf: Portfolio, prices: dict[str, float]) -> str:
             else:
                 lines.append(f"• {sym}: {pos.qty:.6g} @ {pos.entry_price:.8g} | prezzo non disponibile")
     else:
-        lines.append("Nessuna posizione aperta.")
+        lines.append("Nessuna posizione aperta. Le posizioni si creano con 🟢BUY "
+                     "o con /auto (al segnale di ingresso).")
     lines += ["", f"💰 Totale: {total:,.2f} USDT"]
 
     closed = [h for h in pf.history if h["side"] == "sell"]

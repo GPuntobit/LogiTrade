@@ -22,11 +22,19 @@ def _exchange(exchange_id: str) -> ccxt.Exchange:
 
 
 def fetch_last_price(symbol: str, exchange_id: str = "okx") -> float:
-    """Ultimo prezzo noto per il simbolo (ticker)."""
+    """Prezzo di mercato corrente per il simbolo.
+
+    Usa il mid bid/ask: su mercati poco scambiati l'ultimo prezzo di
+    negoziazione (`last`) puo' restare fermo a lungo mentre il book e' vivo.
+    In fallback l'ultimo prezzo di trade.
+    """
     ex = _exchange(exchange_id)
     if symbol not in ex.markets:
         raise ValueError(f"{symbol} non disponibile su {exchange_id}")
     ticker = ex.fetch_ticker(symbol)
+    bid, ask = ticker.get("bid"), ticker.get("ask")
+    if bid and ask:
+        return (float(bid) + float(ask)) / 2
     price = ticker.get("last") or ticker.get("close")
     if not price:
         raise ValueError(f"Prezzo non disponibile per {symbol}")

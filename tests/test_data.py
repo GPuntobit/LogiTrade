@@ -106,6 +106,42 @@ def test_unsupported_timeframe_raises(cache_dir, monkeypatch):
         data_mod.fetch_ohlcv("X/USDT", "2w", "2024-01-01", "okx")
 
 
+class FakeTickerExchange(FakeExchange):
+    def __init__(self, ticker: dict):
+        super().__init__(total_candles=1, max_batch=300)
+        self.ticker = ticker
+
+    def fetch_ticker(self, symbol):
+        return self.ticker
+
+
+def test_last_price_prefers_bid_ask_mid(monkeypatch):
+    """Regressione: il prezzo deve essere vivo (mid bid/ask), non l'ultimo trade fermo."""
+    fake = FakeTickerExchange({"bid": 10.0, "ask": 12.0, "last": 99.0, "close": 99.0})
+    monkeypatch.setattr(data_mod, "_exchange", lambda ex_id: fake)
+    assert data_mod.fetch_last_price("X/USDT", "okx") == 11.0
+
+
+def test_last_price_falls_back_to_last_trade(monkeypatch):
+    fake = FakeTickerExchange({"last": 42.0})
+    monkeypatch.setattr(data_mod, "_exchange", lambda ex_id: fake)
+    assert data_mod.fetch_last_price("X/USDT", "okx") == 42.0
+
+
+def test_last_price_raises_without_any_price(monkeypatch):
+    fake = FakeTickerExchange({})
+    monkeypatch.setattr(data_mod, "_exchange", lambda ex_id: fake)
+    with pytest.raises(ValueError, match="Prezzo non disponibile"):
+        data_mod.fetch_last_price("X/USDT", "okx")
+
+
+def test_last_price_unknown_symbol(monkeypatch):
+    fake = FakeTickerExchange({"last": 1.0})
+    monkeypatch.setattr(data_mod, "_exchange", lambda ex_id: fake)
+    with pytest.raises(ValueError, match="non disponibile"):
+        data_mod.fetch_last_price("NOPE/USDT", "okx")
+
+
 class LateListedExchange:
     """Simbolo quotato tardi: since prima della quotazione ritorna vuoto (come OKX)."""
 
