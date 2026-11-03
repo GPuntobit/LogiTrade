@@ -104,3 +104,56 @@ def test_unsupported_timeframe_raises(cache_dir, monkeypatch):
     monkeypatch.setattr(data_mod, "_exchange", lambda ex_id: fake)
     with pytest.raises(ValueError, match="Timeframe non supportato"):
         data_mod.fetch_ohlcv("X/USDT", "2w", "2024-01-01", "okx")
+
+
+class LateListedExchange:
+    """Simbolo quotato tardi: since prima della quotazione ritorna vuoto (come OKX)."""
+
+    def __init__(self, listing_offset: int, total: int, max_batch: int = 300):
+        self.listing = START_MS + listing_offset * TF_MS
+        self.end = START_MS + (listing_offset + total) * TF_MS
+        self.total = total
+        self.max_batch = max_batch
+        self.markets = {"X/USDT": {}}
+        self.calls = 0
+
+    def parse8601(self, s: str) -> int:
+        return START_MS
+
+    def milliseconds(self) -> int:
+        return self.end
+
+    def fetch_ohlcv(self, symbol, timeframe, since=None, limit=1000):
+        self.calls += 1
+        if since is None:
+            start = max(self.listing, self.end - self.max_batch * TF_MS)
+        elif since < self.listing:
+            return []  # comportamento OKX: richiesta che parte prima della quotazione
+        else:
+            start = since
+        n = min(limit, self.max_batch, (self.end - start) // TF_MS)
+        if n <= 0:
+            return []
+        return [[start + i * TF_MS, 100.0, 101.0, 99.0, 100.5, 1000.0] for i in range(n)]
+
+
+def test_late_listed_symbol_fallback(cache_dir, monkeypatch):
+    """Regressione: simbolo quotato dopo `since` deve ottenere comunque lo storico."""
+    fake = LateListedExchange(listing_offset=400, total=250, max_batch=300)
+    monkeypatch.setattr(data_mod, "_exchange", lambda ex_id: fake)
+
+    df = data_mod.fetch_ohlcv("X/USDT", "1d", "2024-01-01", "okx", use_cache=False)
+    assert len(df) == 250  # tutte le candele dalla quotazione
+    expected_first = pd.Timestamp(START_MS + 400 * TF_MS, unit="ms", tz="UTC")
+    assert df.index[0] == expected_first
+    assert not df.index.duplicated().any()
+
+
+def test_late_listed_symbol_backward_pagination(cache_dir, monkeypatch):
+    """Storico lungo del simbolo quotato tardi: piu' passi indietro, senza vuoti."""
+    fake = LateListedExchange(listing_offset=100, total=750, max_batch=300)
+    monkeypatch.setattr(data_mod, "_exchange", lambda ex_id: fake)
+
+    df = data_mod.fetch_ohlcv("X/USDT", "1d", "2024-01-01", "okx", use_cache=False)
+    assert len(df) == 750
+    assert df.index.is_monotonic_increasing

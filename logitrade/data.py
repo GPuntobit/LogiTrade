@@ -33,6 +33,32 @@ def fetch_last_price(symbol: str, exchange_id: str = "okx") -> float:
     return float(price)
 
 
+def _fetch_history_backwards(ex: ccxt.Exchange, symbol: str, timeframe: str,
+                             tf_ms: int, max_batch: int = 300) -> list[list]:
+    """Storico disponibile paginando ALL'INDIETRO dall'ultima candela.
+
+    Serve quando `since` precede la quotazione del simbolo: OKX ritorna vuoto
+    invece delle candele dalla quotazione in poi.
+    """
+    rows = ex.fetch_ohlcv(symbol, timeframe, limit=1000)  # ultime disponibili
+    if not rows:
+        return []
+    all_rows = list(rows)
+    oldest = rows[0][0]
+    window = max_batch
+    while window >= 1:
+        batch = ex.fetch_ohlcv(symbol, timeframe, since=oldest - window * tf_ms, limit=1000)
+        if not batch:
+            window //= 2  # vicini alla quotazione: stringi la finestra
+            continue
+        all_rows = batch + all_rows
+        if batch[0][0] >= oldest:  # nessun avanzamento: evita loop infiniti
+            break
+        oldest = batch[0][0]
+        window = max_batch
+    return all_rows
+
+
 def fetch_ohlcv(symbol: str, timeframe: str = "1h", since: str = "2024-01-01",
                 exchange_id: str = "okx", use_cache: bool = True) -> pd.DataFrame:
     """Scarica le candele OHLCV e le restituisce come DataFrame (indice datetime UTC)."""
@@ -61,7 +87,13 @@ def fetch_ohlcv(symbol: str, timeframe: str = "1h", since: str = "2024-01-01",
             break
         since_ms = next_since
 
+    if not rows:
+        # simbolo quotato DOPO `since`: recupera lo storico disponibile
+        rows = _fetch_history_backwards(ex, symbol, timeframe, tf_ms)
+
     df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    if df.empty:
+        raise ValueError(f"Nessun dato per {symbol} ({timeframe})")
     df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
     df = df.set_index("datetime").drop(columns=["timestamp"]).astype(float)
     df = df[~df.index.duplicated(keep="last")]

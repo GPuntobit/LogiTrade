@@ -164,5 +164,19 @@ e spuntata prima di passare alla successiva.
   da max 300 candele e il loop si fermava al primo batch parziale. I risultati delle
   task 1-9 sono stati calcolati su dati Binance; la scan di conferma su OKX dà
   numeri coerenti (somma +231% vs +227%).
+- **2026-11: aggiunti TURBO/USDT e PENGU/USDT** ai simboli monitorati, selezionati
+  su 16 candidati meme coin verificati su OKX spot per performance positiva:
+
+  | symbol | B&H | breakout 20/10 | trade | vol 24h |
+  |---|---|---|---|---|
+  | TURBO/USDT | +102% | +92.7% | 31 | 0.1M$ |
+  | PENGU/USDT | -75% | +45.3% | 19 | 1.5M$ |
+
+  Scelti come migliori per rendimento strategia e liquidità; NEIRO/BABYDOGE
+  (+18%) scartati per liquidità scarsa, MOODENG (+38%) battuto da PENGU su
+  rendimento e volumi. Corretto anche il secondo bug dati trovato: OKX ritorna
+  vuoto per simboli quotati DOPO la data `since` — aggiunto fallback con
+  paginazione indietro + finestra a dimezzamento (2 test di regressione).
+  Scan 8 simboli 1d breakout: somma +369%.
 
 <!-- Aggiornare man mano che ogni task viene completata -->
